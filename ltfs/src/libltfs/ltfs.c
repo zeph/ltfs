@@ -116,6 +116,7 @@
 #include "iosched.h"
 #include "dcache.h"
 #include "kmi.h"
+#include "tape_drivers/linux/ibmtape/IBM_tape.h"
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 /*
