@@ -1,9 +1,9 @@
 =======================================================================
-HPE StoreOpen Software (HPE-SOS) - Version 3.4.2
+HPE StoreOpen Standalone (HPE-SOS) - Version 3.3.0
 =======================================================================
 
 Files in this download contain Licensed Materials, property of HPE,
-(C) Copyright 2015-2018 Hewlett Packard Enterprise Development LP
+(C) Copyright 2015, 2016 Hewlett Packard Enterprise Development LP
 
 Files in this download also contain Licensed Materials, property of OSR,
 Copyright (C) 2012 OSR Open Systems Resources, Inc. 
@@ -71,9 +71,9 @@ To install the MinGW packages:
  
  c)	Download the MinGW64 Win32 Tools and extract them to C:\MinGW\MinGW64-32
 
- d)	Copy the provided MinGW overlay directory (located at 
-         dependencies\mingw) over the directory C:\MinGW to place necessary
-         build files not provided by MinGW.
+ d)	Copy the provided MinGW overlay directory (located at dependencies\mingw)
+	over the directory C:\MinGW to place necessary build files not provided 
+	by MinGW.
 
 The LTFS for Windows source code has no binary dependencies on the FUSE package.
 However, the include files provided with FUSE must be available for proper

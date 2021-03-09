@@ -1,5 +1,5 @@
 =======================================================================
-HPE StoreOpen Software (HPE-SOS) - Version 3.4.2
+HPE StoreOpen Standalone (HPE-SOS) - Version 3.3.0
 =======================================================================
 
 Files in this download contain Licensed Materials, property of HPE,
@@ -21,11 +21,10 @@ www.hpe.com/storage/storeopen
 Installing on Linux systems
 =======================================================================
 1.	The below mentioned dependencies are required by HPE SOS to run
-	on supported Linux systems. These dependencies can be either
+	on supported Linux systems. These dependency software's can be either
 	installed from their RPM packages or can be installed by compiling
-	the source. The dependency packages are not supplied with HPE SOS;
-        users will need to download from their respective web sites and
-        install them.
+	the source. The dependency software's are not supplied with HPE SOS. Users
+	will need to download it from their respective web sites and install it.
 	
 		a. FUSE 2.8.5 or higher (http://fuse.sourceforge.net/)
 		b. ICU v50.1.2 (http://site.icu-project.org/download)
@@ -36,10 +35,10 @@ Installing on Linux systems
 	FUSE kernel module is present and loaded.
 
 	To check, execute the following command:
-	  lsmod | grep fuse
+	$ lsmod | grep fuse
 
 	If the module is not currently loaded, you can load it as follows:
-	  modprobe fuse
+	$ modprobe fuse
 
 	If the module is not present on your system, you must first obtain
 	and install it.  Details of how to do this are beyond the scope of
@@ -55,34 +54,31 @@ Installing on Linux systems
 4.	Download the file for your operating system platform:
 
 	(RHEL 6.x (x86 and x64) and RHEL 7.x (x64))
-	HPE-SOS_3.4.2_RHEL_x86_PKG.tar.gz	 (for x86 32-bit installations)
-	HPE-SOS_3.4.2_RHEL_x64_PKG.tar.gz	 (for x64 64-bit installations) 
+	HPE-SOS_3.3.0_RHEL_x86_PKG.tar.gz	 (for x86 32-bit installations)
+	HPE-SOS_3.3.0_RHEL_x64_PKG.tar.gz	 (for x64 64-bit installations) 
 	
 5.	Unzip the package to extract the binaries for supported architectures:
 	For example:
-	  tar -zxvf HPE-SOS_3.4.2_RHEL_x64_PKG.tar.gz
+	$ tar -zxvf HPE-SOS_3.3.0_RHEL_x64_PKG.tar.gz
 	
 	This will unpack the following files in the current directory:
-		a. hpe-sos-3.4.2-71.x86_64.rpm
+		a. hpe-sos-3.3.0-70.x86_64.rpm
 		b. INSTALLING.linux
 		c. COPYING.LIB
 		d. README
 	
-6.	Install the hpe-sos-3.4.2-71.x86_64.rpm
+6.	Install the hpe-sos-3.3.0-70.x86_64.rpm
 	For example:
-	  rpm -ivh hpe-sos-3.4.2-71.x86_64.rpm
-	
-        NOTE: If the dependencies are not yet installed, you can still install
-        HPE SOS using the command 
-          rpm -ivh hpe-sos-3.4.2-71.x86_64.rpm --nodeps
+	$ rpm -ivh hpe-sos-3.3.0-70.x86_64.rpm
+	(NOTE: If the dependencies are not installed using the rpm then to install HPE SOS
+		   run the command "rpm -ivh hpe-sos-3.3.0-70.x86_64.rpm --nodeps")
 	        
-	The executables (ltfs, mkltfs, ltfsck, unltfs, ltfscopy) are placed in
+	This will place the executables (ltfs, mkltfs, ltfsck, unltfs, ltfscopy) in
 	/usr/local/bin/, a number of dynamic libraries in /usr/local/lib64/,
 	and also in a new subdirectory /usr/local/lib64/ltfs/
 	
 7.	That's it!  Refer to the README file for details of how 
 	to use LTFS.
 
-8.	If at a later date you want to uninstall LTFS from your system, run
-        the command
-   	  rpm -e hpe-sos
+8.	If at a later date you want to uninstall LTFS from your system, run the command
+   	$rpm -e hpe-sos

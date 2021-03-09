@@ -101,7 +101,6 @@
 int _pathname_is_utf8(const char *name, size_t size);
 int _pathname_validate(const char *name, bool allow_slash);
 int _pathname_valid_in_xml(UChar32 c);
-int _pathname_valid_in_xml_for_xattrvalue(UChar32 c);
 int _pathname_format_icu(const char *src, char **dest, bool validate, bool allow_slash);
 int _pathname_check_utf8_icu(const char *src, size_t size);
 int _pathname_foldcase_utf8_icu(const char *src, char **dest);
@@ -338,7 +337,7 @@ int pathname_validate_xattr_value(const char *name, size_t size)
 			return -LTFS_ICU_ERROR;
 		}
 
-		if (_pathname_valid_in_xml_for_xattrvalue(c) == 0)
+		if (_pathname_valid_in_xml(c) == 0)
 			return 1;
 	}
 
@@ -459,24 +458,6 @@ int _pathname_valid_in_xml(UChar32 c)
 		return 0;
 	else
 		return 1;
-}
-
-/**
- * Determine whether a given Unicode code point is valid in XML for an
- *  extended attribute value.  Diverged from preceding function because
- *  EA values are encoded using base64 rather than percent encoding used
- *  for EA names (and for directory & file names).  HPE 09-Aug-18
- * @param c Code point to check.
- * @return 1 if valid or 0 if not (i.e. needs base64 encoding).
- */
-int _pathname_valid_in_xml_for_xattrvalue (UChar32 c)
-{
-	if ((c >= 0 && c <= 0x1f && c != 0x09 && c != 0x0a && c != 0x0d) ||
-	    (c >= 0xd800 && c <= 0xdfff) || c == 0xfffe || c == 0xffff) {
-		return 0;
-	} else {
-		return 1;
-	}
 }
 
 /**

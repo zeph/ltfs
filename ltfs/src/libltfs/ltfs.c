@@ -116,7 +116,6 @@
 #include "iosched.h"
 #include "dcache.h"
 #include "kmi.h"
-#include "tape_drivers/linux/ibmtape/IBM_tape.h"
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 /*
@@ -587,16 +586,16 @@ int ltfs_setup_device(struct ltfs_volume *vol)
 	 * but is non-functional.
 	 */
 	if (vol->append_only_mode) {
-		ltfsmsg(LTFS_INFO, "17157I", "to append-only mode");
+		/* ltfsmsg(LTFS_INFO, "17157I", "to append-only mode"); */
 		ret = tape_enable_append_only_mode(vol->device, true);
 	} else {
 		/* Check write mode and reset to write-anywhere mode if required. */
-		ltfsmsg(LTFS_INFO, "17157I", "to write-anywhere mode");
+		/* ltfsmsg(LTFS_INFO, "17157I", "to write-anywhere mode"); */
 		ret = tape_get_append_only_mode_setting(vol->device, &enabled);
 		if (ret < 0)
 			return ret;
 		if (enabled) {
-			ltfsmsg(LTFS_INFO, "17157I", "from append-only mode to write-anywhere mode");
+			/* ltfsmsg(LTFS_INFO, "17157I", "from append-only mode to write-anywhere mode"); */
 			ret = tape_enable_append_only_mode(vol->device, false);
 		}
 	}

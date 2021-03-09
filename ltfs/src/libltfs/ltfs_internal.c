@@ -567,16 +567,6 @@ int ltfs_seek_index(char partition, tape_block_t *eod_pos, tape_block_t *index_e
 			check_err(tape_get_position(vol->device, &pos), "11200E", out);
 			*index_end_pos = pos.block;
 			*blocks_after = ! (pos.block == eod.block);
-
-                /* 
-                 * CR 10930 - if we ran out of memory or mutexes whilst trying to read the
-                 *  index, return an error...
-                 */
-                } else if (ret == -LTFS_NO_MEMORY) {
-                  // OutputDebugString ("Cannot seek to index, we ran out of resources!");
-                  goto out;
-
-
 		} else { /* no index file found: go back 2 file marks and try again */
 			ltfsmsg(LTFS_DEBUG, "11204D");
 			if (!vol->ignore_wrong_version && ret == -LTFS_UNSUPPORTED_INDEX_VERSION)

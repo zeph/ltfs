@@ -67,7 +67,6 @@
 #include "arch/filename_handling.h"
 #include "dcache.h"
 #include "fs.h"
-#include "tape_drivers/linux/ibmtape/IBM_tape.h"
 
 #define TRUNCATE_STRING(end) do { if ((end)) *(end) = '\0'; } while(0)
 #define RESTORE_STRING(end)  do { if ((end)) *(end) =  '/'; } while(0)

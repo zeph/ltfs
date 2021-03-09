@@ -535,23 +535,7 @@ struct tape_ops {
 	 */
 	int   (*unload)(void *device, struct tc_position *pos);
 
-        /**
-        * HPE Change - CR 11358 - Add a more flexible means of loading and unload.
-        * Load or unload medium to/from a device.
-        * @param device Device handle returned by the backend's open().
-        * @param pos Pointer to a tc_position structure. The backend must fill this structure with
-        *            the final logical block position of the device, even on error.
-        *            libltfs does not depend on any particular position being set here.
-        * @param load Whether to load (TRUE) or unload (FALSE)
-        * @param hold Whether to partially load/unload (TRUE) or fully (FALSE)
-        * @return 0 on success or a negative value on error.
-        *         If no medium is present in the device, the backend must return -EDEV_NO_MEDIUM.
-        *         If the medium is unsupported (for example, does not support two partitions),
-        *         the backend should return -LTFS_UNSUPPORTED_MEDIUM.
-        */
-        int (*loadunload)(void *device, struct tc_position *pos, bool load, bool hold);
-
-        /**
+	/**
 	 * Read logical position (partition and logical block) from a device.
 	 * @param device Device handle returned by the backend's open().
 	 * @param pos Pointer to a tc_position structure. On success, the backend must fill this

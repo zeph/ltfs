@@ -100,7 +100,6 @@
 #include "ltfs_endian.h"
 #include "kmi.h"
 #include "xattr.h"
-#include "tape_drivers/linux/ibmtape/IBM_tape.h"
 
 enum partition_status {
 	PART_WRITABLE = 0,  /* Device is writable */
@@ -2250,12 +2249,8 @@ int tape_enable_append_only_mode(struct device_data *dev, bool enable)
 
 	/* If cartridge is loaded and append-only mode is to be disabled,
 	   the cartridge has to be unloaded before sending mode select. */
-
-        /* HPE Change : CR 11358 - we only want to do a PARTIAL unload at this
-           point, so that (a) the cartridge doesn't come out, and (b) we can
-           then reload cleanly.  So use our new API / backend method...       */
 	if (loaded && !enable && (mp_dev_config_ext[21]& 0xF0) == 0x10) {
-		ret = dev->backend->loadunload(dev->backend_data, &dev->position, FALSE, TRUE);  /* Load = FALSE, Hold = TRUE */
+		ret = dev->backend->unload(dev->backend_data, &dev->position);
 		if (ret < 0) {
 			ltfsmsg(LTFS_ERR, "17151E", ret);
 			return ret;
@@ -2290,7 +2285,7 @@ int tape_enable_append_only_mode(struct device_data *dev, bool enable)
 	}
 
 	if (reload) {
-		ret = dev->backend->loadunload(dev->backend_data, &dev->position, TRUE, FALSE); /* Load = TRUE, Hold = FALSE */
+		ret = dev->backend->load(dev->backend_data, &dev->position);
 		if (ret < 0) {
 			ltfsmsg(LTFS_ERR, "17152E", "Reload", ret);
 			return ret;

@@ -267,6 +267,5 @@ root:table {
 		14486E:string { "Failed to find a valid index from either partition to do a read-only mount as IPPWE is set in MAM" }
         14487I:string { "The Data and Index Partition Permanent write error bit is set in MAM " }
 		14488E:string { "Failed to find a valid index from either partition to do a read-only mount as DP_IP_PWE is set in MAM" }
-		14489E:string { "Unable to mount, out of memory or mutexes" }
 	}
 }

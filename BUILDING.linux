@@ -1,9 +1,9 @@
 =======================================================================
-HPE StoreOpen Software (HPE-SOS) - Version 3.4.2
+HPE StoreOpen Standalone (HPE-SOS) - Version 3.3.0
 =======================================================================
 
 Files in this download contain Licensed Materials, property of HPE,
-(C) Copyright 2015-2018 Hewlett Packard Enterprise Development LP
+(C) Copyright 2015, 2016 Hewlett Packard Enterprise Development LP
 
 Files in this download also contain Licensed Materials, property of IBM,
 (C) Copyright IBM Corp. 2010, 2014
@@ -26,9 +26,8 @@ Building HPE-SOS from source code
 	$ gunzip HPE-SOS_SOURCE.tar.gz
 	$ tar xf HPE-SOS_SOURCE.tar
 
-2.	Required Software packages - HPE StoreOpen Software 3.4.2 requires the
-        following software packages on Linux. Make sure that these packages
-        are installed on the target computer.
+2.	Required Software packages - HPE StoreOpen Standalone 3.3.0 requires the below software packages 
+	on Linux. Make sure that these packages are installed on the target computer.
    
 	1. libicu 50.1.2
 	2. libicu-devel 50.1.2
@@ -54,7 +53,7 @@ Building HPE-SOS from source code
 	e2fsprogs package) and libxml2.
 
 3.	Run the configure script
-	$ cd hpe-sos_3.4.2
+	$ cd hpe-sos_3.3.0
 	$ ./configure
 
 	This will check for various dependencies; you must correct any problems

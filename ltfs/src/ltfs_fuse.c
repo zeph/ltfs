@@ -1321,9 +1321,6 @@ void * ltfs_fuse_mount(struct fuse_conn_info *conn)
 	}
 
 	/* Setup tape drive.  Trap and handle the special case of no media present... */
-
-    // HPE drives 7 and 8 now suppot append only mode and need to set the correct flag
-    priv->data->append_only_mode = (bool)priv->append_only_mode;
 	ret = ltfs_setup_device(priv->data);
 	if ((ret == -EDEV_NO_MEDIUM) || (ret == -LTFS_NO_MEDIUM)) {
 		ltfsmsg(LTFS_ERR, "14075E");
@@ -1403,14 +1400,9 @@ void * ltfs_fuse_mount(struct fuse_conn_info *conn)
 		else 
 		{
 		/* The return type -LTFS_NO_MEMORY happens when memory allocation fails */
-		/* CR10930 - previously we changed this to LTFS_INDEX_INVALID and left  */
-		/*  there; however that meant the mount continued and didn't clean up   */
-		/*  correctly, and things got in a right mess.  So now we report the    */
-		/*  error back to Fuse4WinMount and deal with it there.                 */
 		   if (ret == -LTFS_NO_MEMORY) 
 		   {
-                        ltfsmsg(LTFS_ERR, "14489E");
-		   	conn->reserved[0] = ret;  //-LTFS_INDEX_INVALID;
+		   	conn->reserved[0] = -LTFS_INDEX_INVALID;
 		   	ltfs_index_free_force(&priv->data->index);
 		   	ltfs_device_close(priv->data);
 		   	return NULL;
@@ -1653,8 +1645,6 @@ void ltfs_fuse_umount(void *userdata)
 
 	if (kmi_initialized(priv->data))
 		kmi_destroy(priv->data);
-
-    priv->data->append_only_mode = (bool)priv->append_only_mode;
 
 	ltfs_unmount(SYNC_UNMOUNT, priv->data);
 

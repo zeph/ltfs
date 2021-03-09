@@ -1618,7 +1618,7 @@ int _xml_parse_one_xattr(xmlTextReaderPtr reader, struct dentry *d)
                } 
                else 
                {
-                   update_xattr_safe_name(xattr); // Need to update xattr->key with the decoded name.
+                  xattr->key = NULL;
                }  
             }
             else

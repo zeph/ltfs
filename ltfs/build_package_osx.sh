@@ -65,7 +65,7 @@ FUSE="NONE";
 #
 LTFS_FRAMEWORK=LTFS.framework
 LTFS_FRAMEWORK_EXECUTABLE=LTFS
-LTFS_VERSION=3.4.2
+LTFS_VERSION=3.3.0
 
 OUTPUT_DIR_NAME=distribution
 
@@ -388,7 +388,7 @@ find include -type f  | xargs chmod a+r
 ##
 cd ${BASEDIR}/${OUTPUT_DIR_NAME}
 PACKAGE_MAKER=/Applications/Utilities/PackageMaker.app/Contents/MacOS/PackageMaker
-${PACKAGE_MAKER} -d ${BASEDIR}/osx_installer/LTFS.pmdoc -v -i com.hpe.ltfs -o ${BASEDIR}/${OUTPUT_DIR_NAME}/HPEStoreOpenSoftware.pkg
+${PACKAGE_MAKER} -d ${BASEDIR}/osx_installer/LTFS.pmdoc -v -i com.hpe.ltfs -o ${BASEDIR}/${OUTPUT_DIR_NAME}/HPEStoreOpenStandalone.pkg
 
 cd ${BASEDIR}
 echo "Build complete"

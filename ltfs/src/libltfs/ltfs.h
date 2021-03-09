@@ -142,7 +142,7 @@ struct device_data;
 #endif /* mingw_PLATFORM */
 #endif /* LTFS_DEFAULT_WORK_DIR */
 
-#define LTFS_BUILD_VERSION            9
+#define LTFS_BUILD_VERSION            70 /* Build version */
 #define LTFS_MIN_CACHE_SIZE_DEFAULT   25 /* Default minimum cache size (MiB) */
 #define LTFS_MAX_CACHE_SIZE_DEFAULT   50 /* Default maximum cache size (MiB) */
 #define LTFS_SYNC_PERIOD_DEFAULT (5 * 60) /* default sync period (5 minutes) */
@@ -181,7 +181,7 @@ struct device_data;
 
 #ifdef __APPLE__
 #define PACKAGE_NAME                  "LTFS"
-#define PACKAGE_VERSION               "3.4.2"
+#define PACKAGE_VERSION               "3.3.0"
 #else
 #include "config.h"
 #endif
@@ -189,11 +189,11 @@ struct device_data;
 #ifdef HPE_BUILD
 #define PACKAGE_OWNER                 "HPE LTFS"
 #define LTFS_VENDOR_NAME              "HPE "
-#define SOFTWARE_PRODUCT_NAME         "StoreOpen Software"
+#define SOFTWARE_PRODUCT_NAME         "StoreOpen Standalone"
 #elif defined QUANTUM_BUILD
 #define PACKAGE_OWNER                 "QUANTUM LTFS"
 #define LTFS_VENDOR_NAME              "QUANTUM "
-#define SOFTWARE_PRODUCT_NAME         "LTFS Software"
+#define SOFTWARE_PRODUCT_NAME         "LTFS Standalone"
 #elif defined GENERIC_OEM_BUILD
 #define PACKAGE_OWNER                 "LTFS"
 #define LTFS_VENDOR_NAME              ""
@@ -212,7 +212,7 @@ struct device_data;
 #undef LTFS_VENDOR_NAME
 #define LTFS_VENDOR_NAME             "LTFS"
 #undef SOFTWARE_PRODUCT_NAME
-#define SOFTWARE_PRODUCT_NAME        "LTFS Software"
+#define SOFTWARE_PRODUCT_NAME        "LTFS Standalone"
 #endif
 #endif
 #define LTFS_LIVELINK_EA_NAME         "ltfs.vendor.IBM.prefixLength"

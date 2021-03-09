@@ -146,7 +146,7 @@ static struct fuse_opt ltfs_options[] = {
 	LTFS_OPT("noallow_other",          allow_other, 0),
 	LTFS_OPT("capture_index",          capture_index, 1),
 	LTFS_OPT("symlink_type=%s",        symlink_str, 0),
-	LTFS_OPT("scsi_append_only_mode=%s", str_append_only_mode, 0),
+	/*LTFS_OPT("scsi_append_only_mode=%s", str_append_only_mode, 0),*/
 	LTFS_OPT_KEY("-a",                 KEY_ADVANCED_HELP),
 	FUSE_OPT_KEY("-h",                 KEY_HELP),
 	FUSE_OPT_KEY("--help",             KEY_HELP),
@@ -189,7 +189,7 @@ void single_drive_advanced_usage(const char *default_driver, struct ltfs_fuse_da
 	ltfsresult("14437I"); /* -o rollback_mount */
 	ltfsresult("14448I"); /* -o release_device */
 	ltfsresult("14456I"); /* -o capture_index */
-	ltfsresult("14463I"); /* -o scsi_append_only_mode=<on|off> */
+	/*ltfsresult("14463I");*/ /* -o scsi_append_only_mode=<on|off> */
 	ltfsresult("14406I"); /* -a */
 	/* TODO: future use for WORM */
 	/* set worm rollback flag and rollback_str by this option */
@@ -745,17 +745,8 @@ int main(int argc, char **argv)
 			return 1;
 	}
 
-	/* Enable correct permissions checking in the kernel if any permission overrides are set  */
-	/*********************************************************************************/
-	/* HPE Change  : For Mac with OSXFUSE, use defer_permissions so that the fs is   */
-	/* 16-Aug-18     left to make decisions rather than the kernel thinking it knows */
-	/* CR11168       best... used to cause 'Operation not permitted' errors...       */
-	/*********************************************************************************/
-#ifdef __APPLE__
-	ret = fuse_opt_add_arg(&args, "-odefer_permissions");
-#else
+	/* Enable correct permissions checking in the kernel if any permission overrides are set */
 	ret = fuse_opt_add_arg(&args, "-odefault_permissions");
-#endif
 	if (ret < 0) {
 		/* Could not enable FUSE option */
 		ltfsmsg(LTFS_ERR, "14001E", "default_permissions", ret);
@@ -1025,6 +1016,11 @@ int single_drive_main(struct fuse_args *args, struct ltfs_fuse_data *priv)
 		}
 	}
 
+	/*
+	 * HPE change: HP drives don't support the append only mode functionality.
+	 * All the options and messages related to that are disabled. Code remains
+	 * but is non-functional.
+	 */
 	/* Validate append_only_mode */
 	if (priv->str_append_only_mode) {
 		if (strcasecmp(priv->str_append_only_mode, "on") == 0)
@@ -1036,20 +1032,16 @@ int single_drive_main(struct fuse_args *args, struct ltfs_fuse_data *priv)
 			return 1;
 		}
 	} else {
+		/* The append_only_mode will always be 0 in our environment. */
 		priv->append_only_mode = 0;
 	}
 
-        /*
-         * HPE change: CR 11358 : 08 Oct 18
-         *  We use partial unload to switch out of append-only mode, so don't need to 
-         *  enforce the eject requirement.  So this whole clause can be commented out.
-         */
-	//if (priv->eject == 0 && priv->append_only_mode != 0) {
-	//	/* Append only mode need to eject a cartridge at unmount to clear the mode on drive setting */
-	//	/* To avoid cartridge ejection at unmount, disable append only mode at the moount with noeject option */
-	//	priv->append_only_mode = 0;
-	//	/*ltfsmsg(LTFS_INFO, "14095I");*/
-	//}
+	if (priv->eject == 0 && priv->append_only_mode != 0) {
+		/* Append only mode need to eject a cartridge at unmount to clear the mode on drive setting */
+		/* To avoid cartridge ejection at unmount, disable append only mode at the moount with noeject option */
+		priv->append_only_mode = 0;
+		/*ltfsmsg(LTFS_INFO, "14095I");*/
+	}
 
 	/* If the local inode space is big enough, have FUSE pass through our UIDs as inode
 	 * numbers instead of generating its own. */
@@ -1079,8 +1071,7 @@ int single_drive_main(struct fuse_args *args, struct ltfs_fuse_data *priv)
 	}
 	ltfs_use_atime(priv->atime, priv->data);
 
-
-    /*
+	/*
 	 * OSR
 	 *
 	 * In our MinGW environment, we mount the device on access. This

@@ -6,7 +6,7 @@
 **
 ** CONTENTS:        Definitions and further header files for LTO diagnostic routines
 **
-** (C) Copyright 2015-2018 Hewlett Packard Enterprise Development LP
+** (C) Copyright 2015, 2016 Hewlett Packard Enterprise Development LP
 ** (c) Copyright 2010, 2011 Quantum Corporation
 **
 ** This program is free software; you can redistribute it and/or modify it
@@ -27,51 +27,20 @@
 **   26 April 2010
 **
 *************************************************************************************
-**
-** Copyright (C) 2012 OSR Open Systems Resources, Inc.
-** 
-************************************************************************************* 
 */
 
 #ifndef __ltotape_diag_h
 #define __ltotape_diag_h
 
-#ifdef HPE_mingw_BUILD
-/* 
- * OSR
- *
- * Our environment needs some fixups before ibm_tape can be
- * included
- */
-# include "libltfs/arch/win/win_util.h"
-
-# ifndef ushort
-#  define ushort unsigned short
-# endif
-# ifndef uint
-#  define uint unsigned int
-# endif
-# ifndef daddr_t
-#  define daddr_t long
-# endif
-#endif
-
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include "libltfs/tape_ops.h"
-#include "libltfs/ltfslogging.h"
-#include "libltfs/ltfs.h"
-
-#ifndef HPE_mingw_BUILD
-# define MAX_PATH 256  /* Maximum path length; Windows already defines this */
-# ifdef __APPLE__
-#  include "../../linux/ibmtape/IBM_tape.h"
-# else
-#  include "../ibmtape/IBM_tape.h" /* for some common definitions */
-# endif
+#include "../../../libltfs/tape_ops.h"
+#ifdef __APPLE__
+#include "../../linux/ibmtape/IBM_tape.h"
+#else
+#include "../ibmtape/IBM_tape.h" /* for some common definitions */
 #endif
-
 #include "ltotape_timeout.h"
 
 /*
@@ -81,6 +50,8 @@
 # define HPLTFS_COPYRIGHT   "Portions (C) Copyright 2015, 2016 Hewlett Packard Enterprise Development LP"
 #elif defined QUANTUM_BUILD
 # define QTMLTFS_COPYRIGHT   "Portions copyright (c) 2010-2011 Quantum Corporation"
+#elif defined GENERIC_OEM_BUILD 
+# define GENERICLTFS_COPYRIGHT   "Portions copyright (c) 2010-2011 Generic LTFS"
 #endif
 
 #define KB   (1024)
@@ -99,18 +70,6 @@
 #define LTOTAPE_TIMESTAMP_OFFSET         12
 #define LTOTAPE_LIBSN_OFFSET             52
 #define LTOTAPE_LIBSN_LENGTH             32
-
-#define LTOTAPE_CLEAR_ERRHIST_NEXUS      0xFF
-#define LTOTAPE_RBMODE_ERRHIST           0x1C
-
-#define SENDDIAG_BUF_LEN                 8
-#define DIAG_TRIGGER_DUMP                0x60  /* actually 0x160 but we assume the 1 !  */
-#define DIAG_TRIGGER_MINIDUMP            0x63  /* actually 0x163 but as above..         */
-
-#define DUMP_HEADER_SIZE                 4
-#define DUMP_TRANSFER_SIZE               (512 * KB)
-#define MINI_DUMP_HEADER_SIZE            256
-#define MINI_DUMP_TRANSFER_SIZE          (256 * KB)
 
 /*
  * Function prototype for (public) function:

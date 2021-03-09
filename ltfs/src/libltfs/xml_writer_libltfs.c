@@ -553,7 +553,7 @@ int _xml_write_file(xmlTextWriterPtr writer, const struct dentry *file)
 		writer, BAD_CAST "readonly", BAD_CAST (file->readonly ? "true" : "false")), -1);
 	
 	// HPE MD 12.10.2017 added to support SNIA spec 2.4.0 sect 9.2.8 openforwrite
-    if (file->openforwrite && (!file->isslink))
+    if (file->openforwrite)
     {
         xml_mktag(xmlTextWriterWriteElement(
             writer, BAD_CAST "openforwrite", BAD_CAST "true" ), -1);

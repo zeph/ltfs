@@ -48,7 +48,7 @@
 
 #include "libltfs/ltfs.h"
 #ifndef mingw_PLATFORM
-//#include <sys/sysctl.h>
+#include <sys/sysctl.h>
 #endif
 #include <sys/types.h>
 #include <sys/stat.h>

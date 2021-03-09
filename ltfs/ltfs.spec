@@ -1,12 +1,12 @@
 # RPM specification file for HPE SOS.
-Summary: HPE StoreOpen Software (HPE-SOS) - Version 3.4.2
+Summary: HPE StoreOpen Standalone (HPE-SOS) - Version 3.3.0
 Name: HPE-SOS		
-Version: 3.4.2
-Release: 9
+Version: 3.3.0	
+Release: 70
 Group: Util
 License: LGPL	
 Vendor: HPE
-Source0: HPE_LTFS_3.4.2_BUILD9
+Source0: hpe-sos_330_70.tar.gz
 Prereq: /sbin/ldconfig, /usr/bin/awk
 Requires:  fuse >= 2.8.4
 Requires:  libxml2 >= 2.6.16

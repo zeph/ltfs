@@ -1,5 +1,5 @@
 ﻿=======================================================================
-HPE StoreOpen Software (HPE-SOS) - Version 3.4.2
+HPE StoreOpen Standalone (HPE-SOS) - Version 3.3.0
 =======================================================================
 
 Files in this download contain Licensed Materials, property of HPE,
@@ -32,14 +32,14 @@ Further details on HPE's LTFS implementation can be found at
  www.hpe.com/storage/storeopen
 
 =======================================================================
-HPE-SOS_3.4.2 usage
+HPE-SOS_3.3.0 usage
 =======================================================================
 
 1.	Mapping a tape drive to a drive letter
 
 	Before you can access the tape cartridge as a volume, you must first establish a mapping between
 	the tape drive and a Windows drive letter. To do this, run the LTFS Configuration Tool located in
-	the HPE StoreOpen Software program group.
+	the HPE StoreOpen Standalone program group.
 	
 	NOTE: The tool may request administrative privileges, depending on your system security policies.
 	
@@ -55,7 +55,7 @@ HPE-SOS_3.4.2 usage
 	  started and the window is updated to reflect the new configuration.
 	5.A new option called Drive alias is provided for the user to specify drive names of their choice.
 	  
-2.	Using HPE StoreOpen Software (Windows)
+2.	Using HPE StoreOpen Standalone (Windows)
 	
 	When the mapping has been established, you can close or minimize the configuration tool,or choose 
 	to map to another tape drive.
@@ -97,12 +97,13 @@ HPE-SOS_3.4.2 usage
 	  the ten most recent logs and automatically delete any older logs. These logs may be useful
 	  to HPE support personnel but otherwise can be ignored.
 	◦ Enable verbose logging: This is not required in normal operation and you should only
-	  use it when requested by HPE support personnel, as it will have an adverse effect on performance.
+	  use it when requested by HPE support personnel, as it will have an adverse effect on
+      performance.
 	◦ Enable extended verbose logging: This adds a further level of detail to logfile entries.
 	◦ Thumbnails: When Windows encounters a folder full of files, it attempts to build thumbnails
 	  to represent the content of each file. This is not desirable in an LTFS volume, because it
 	  may take many minutes or even hours to generate the thumbnails. So by default HPE
-	  StoreOpen Software tells the operating system that the volume is in the “offline” state,
+	  StoreOpen Standalone tells the operating system that the volume is in the “offline” state,
 	  which prevents automatic thumbnail creation. You can turn this off if desired, but be
 	  aware that it will have a severe effect on the time needed to open and browse folders.
 	• Index capture: This option allows you to keep a copy of the latest index from tape on
@@ -117,7 +118,7 @@ HPE-SOS_3.4.2 usage
 	c. Index updates
 	
 	Accessing data stored on tape relies on an up-to-date index being available. HPE StoreOpen
-	Software offers three different mechanisms for updating the copy of the index stored on tape.
+	Standalone offers three different mechanisms for updating the copy of the index stored on tape.
 	The default setting is to write a copy of the index to tape periodically while writing data; the index
 	is written every five minutes. You can change the time interval to every minute. This method of
 	index update reduces the window of exposure to power-loss events, since there will be an index
@@ -129,7 +130,7 @@ HPE-SOS_3.4.2 usage
 	left in an inconsistent state, and all files added since the last dismount operation will be inaccessible.
 	The CheckWizard utility may be able to recover the file data to the _ltfs_lostandfound
 	directory, but the metadata (filename, access dates, and so on) will be lost.
-	The final mechanism provided in HPE StoreOpen Software is to update the index every time a
+	The final mechanism provided in HPE StoreOpen Standalone is to update the index every time a
 	file is closed after writing. This further reduces the exposure window to a single file, or (if several
 	processes are using the volume simultaneously) to the number of files being written concurrently.
 	However, this does add some overhead, both in terms of the tape capacity used for each index,
@@ -157,7 +158,7 @@ HPE-SOS_3.4.2 usage
 	  
 4.	File permissions
 
-	The HPE StoreOpen Software application manages a common set of file permissions for all files
+	The HPE StoreOpen Standalone application manages a common set of file permissions for all files
 	and users; file and directory ownership is not recorded to tape media. The only permission that is
 	tracked is write-protect information.
 	
@@ -203,7 +204,7 @@ HPE-SOS_3.4.2 usage
 	Before you can use an LTO-5 or LTO-6 cartridge with LTFS, it must be prepared by formatting
 	according to the LTFS specification. The LTFSFormatWizard application helps to select appropriate
 	options and settings and then formats the tape. You can run it from the context menu, from the LTFS
-	Tools tab in the drive properties, or from the HPE StoreOpen Software program group.
+	Tools tab in the drive properties, or from the HPE StoreOpen Standalone program group.
 
 	CAUTION: Read all the text on the wizard dialog windows carefully. Completing this wizard
 	will irretrievably destroy all tape contents.
@@ -328,7 +329,7 @@ HPE-SOS_3.4.2 usage
 	
 11. Using the ltfsattr utility
 
-	HPE StoreOpen Software version 2.2.0 onwards includes the LTFSATTR utility which can be used
+	HPE StoreOpen Standalone version 2.2.0 onwards includes the LTFSATTR utility which can be used
 	to access the attributes from the LTFS volume. It is a Windows command line utility which provides
 	similar functionality to the “attr” command in Linux and the “xattr” command in Mac OS X.
 	
@@ -364,7 +365,7 @@ HPE-SOS_3.4.2 usage
 	
 12. HPE StoreOpen Cartridge Browser 
 
-	HPE StoreOpen Software version 2.2.0 onwards includes a Windows GUI utility to view the
+	HPE StoreOpen Standalone version 2.2.0 onwards includes a Windows GUI utility to view the
 	contents of LTFS index files. Users can select a folder which contains LTFS index files and 
 	the utility will list all the index files in that folder. The user can then open a detailed 
 	view displaying the contents of any index file.
@@ -402,61 +403,22 @@ HPE-SOS_3.4.2 usage
 	- Faster data transfer from Tape to disk and Tape to Tape.
 	- File verification using hash values.
 
-	The ltfscopy tool is installed by default when you install HPE StoreOpen Software. The
+	The ltfscopy tool is installed by default when you install HPE StoreOpen Standalone. The
 	executable name is ltfscopy.exe and it will be available in the installation folder where you
-	installed the HPE StoreOpen Software software.
+	installed the HPE StoreOpen Standalone software.
 
 	Command examples:
 
 	To copy the files from the tape cartridge to C:\photos:
-	ltfscopy.exe –s E:\CVG427L5\ -d C:\photos
+	ltfscopy.exe –s E:\CVG427L5\ -d C:\Photos
 	To copy files and all subfolders and files recursively:
-	ltfscopy.exe –s E:\CVG427L5\ -d C:\photos --recursive
+	ltfscopy.exe –s E:\CVG427L5\ -d C:\Photos --recursive
 	To copy files and all subfolders and files recursively and verify:
-	ltfscopy.exe –s E:\CVG427L5\ -d C:\photos --copy --verify --recursive
+	ltfscopy.exe –s E:\CVG427L5\ -d C:\Photos --copy --verify --recursive
 	To verify previously copied data by comparing it with source:
-	ltfscopy.exe -s E:\CVG427L5\ -d C:\photos --verify –recursive
+	ltfscopy.exe -s E:\CVG427L5\ -d C:\Photos --verify –recursive
 	
 	Run 'ltfscopy --help' for more information about usage and the supported options.
-	
-14. LTFS tape library utility
-
-	The ltfslibutil tool is installed when you install HPE StoreOpen Software.
-	It can be used to exchange cartridges for a mounted LTFS volume in a 
-	supported tape library.  Open the LTFS Console from the Start Menu and run
-	ltfslibutil –h for usage information.
-
-	Command examples:
-
-	To identify which cartridge is currently loaded in drive R:
-	ltfslibutil –i R:
-
-	To list available cartridges in the library:
-	ltfslibutil –l –n R:
-
-	To unload the current cartridge and replace with barcode G80289L7:
-	ltfslibutil –b G80289L7 R:
-
-
-Changes from version v3.4.1 to 3.4.2:
-=====================================
-
-	- Corrected issue switching in/out of append-only mode with LTO7/LTO8 drives
-	- Corrected issue with ltfscopy and md5sum verification
-	
-Changes from version v3.4.0 to 3.4.1:
-=====================================	
-	
-	- Corrected issue affecting sending of library drive tickets to CVTL
-	- Corrected issue with truncation of barcodes
-
-Changes from version v3.3.0 to 3.4.0:
-=====================================	
-	
-	- Supports HPE StoreEver MSL tape libraries
-	- New command line utility ltfslibutil
-	- Support append-only mode option flag for LTO7 & LTO8 drives
-	- Defect fixes
 	
 Changes from version v3.2.0 to 3.3.0:
 =====================================	
@@ -625,21 +587,21 @@ format specification.  LTFS volumes created with application v1.2.0 will not
 be readable in older versions of the LTFS application, as shown in the
 following table:
 
-                      Cartridge written by    Cartridge written by    Cartridge written by
-LTFS application       v1.1.0 or earlier       v1.2.0 or later         v2.1.0 or later
+						Cartridge written by	Cartridge written by	Cartridge written by
+LTFS application		v1.1.0 or earlier		v1.2.0 or later			v2.1.0 or later
 --------------------  ----------------------  ----------------------  -----------------------
-v1.1.0 or earlier       Read/Write ok           Cannot be mounted       N/A
+v1.1.0 or earlier		Read/Write ok			Cannot be mounted		N/A
 
-v1.2.0 or later         Readable ok; will       Read/Write ok           N/A
-                        automatically be 
-                        converted to new
-                        format if written
+v1.2.0 or later			Readable ok; will		Read/Write ok			N/A
+						automatically be 
+						converted to new
+						format if written
 
-v2.1.0 or later         Readable ok; will       Readable ok; will       Read/Write ok
-                        automatically be        automatically be 
-                        converted to new        converted to new
-                        format if written       format if written
-
+v2.3.0 or later			Readable ok; will		Readable ok; will		Read/Write ok
+						automatically be		automatically be 
+						converted to new		converted to new
+						format if written		format if written
+						
 HPE recommends that all instances of HPE LTFS should be updated to latest version
 to avoid these compatibility issues. 
 
