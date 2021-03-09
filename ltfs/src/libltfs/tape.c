@@ -100,6 +100,7 @@
 #include "ltfs_endian.h"
 #include "kmi.h"
 #include "xattr.h"
+#include "tape_drivers/linux/ibmtape/IBM_tape.h"
 
 enum partition_status {
 	PART_WRITABLE = 0,  /* Device is writable */
