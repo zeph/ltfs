@@ -62,16 +62,16 @@ extern "C" {
 #endif
 
 #include <sys/types.h> /* Used in struct stat definition */
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 #include <sys/stat.h>
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 #include <unistd.h>    /* Definitions of uid_t and gid_t */
 #include <basetyps.h>  /* Used for UUID related functions */
 #include <winsock2.h>
 #include <windows.h>
 #include <ws2tcpip.h>
 #include <errno.h>
-#if defined(HP_mingw_BUILD)
+#if defined(HPE_mingw_BUILD)
 #include <dirent.h>
 #endif
 #include <direct.h>    /* _mkdir() */
@@ -180,7 +180,7 @@ const char* dlerror(void);
  * need all of this
  *
  */
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 /* FUSE compatibility */
 #undef fuse_opt_add_arg
 #undef fuse_opt_free_args
@@ -190,7 +190,7 @@ const char* dlerror(void);
 #define fuse_opt_free_args(a)      win_ltfs_dummy()
 #define fuse_opt_parse(a, b, c, d) win_ltfs_dummy()
 #define fuse_main(a, b, c, d)      win_ltfs_dummy()
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
 #if defined(LTFS_MINGW_W64) || defined(LTFS_MINGW_W32)
 #ifndef HAVE_STRUCT_TIMESPEC
@@ -206,9 +206,9 @@ const char* dlerror(void);
  * __WORDSIZE for 64bit builds
  *
  */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 #define __WORDSIZE 64
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 #endif /* _WIN64 */
 
 /* Date/Time compatibility*/
@@ -315,7 +315,7 @@ struct stat_libltfs
  * In our MinGW environment we always use a 64bit stat structure
  *
  */
-#if defined(_WIN64) || defined(HP_mingw_BUILD)
+#if defined(_WIN64) || defined(HPE_mingw_BUILD)
 struct _stat64i32 {
 	_dev_t st_dev;
 	_ino_t st_ino;
@@ -357,7 +357,7 @@ struct _stat64 {
 };
 #else
 #undef _STAT_DEFINED
-#endif /* defined(_WIN64) || defined(HP_mingw_BUILD) */
+#endif /* defined(_WIN64) || defined(HPE_mingw_BUILD) */
 #endif /* _STAT_DEFINED */
 
 int stat_libltfs(const char *_Filename,struct stat_libltfs *_Stat);
@@ -369,7 +369,7 @@ struct tm *gmtime_libltfs(const time_t *timep, struct tm *result);
  * but fuse.h requires _FILE_OFFSET_BITS set to 64.
  */
 #define _FILE_OFFSET_BITS 64
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 #ifndef WIN_UTIL_C
 #define _stat _stat_libltfs
 #define stat stat_libltfs
@@ -378,9 +378,9 @@ struct tm *gmtime_libltfs(const time_t *timep, struct tm *result);
 #define _off_t off64_t
 #define off_t off64_t
 #endif /* WIN_UTIL_C */
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 /* We move this structure definition into our statvfs.h to
    share with the FUSE headers */
 struct statvfs
@@ -400,7 +400,7 @@ struct statvfs
 	unsigned long f_ffree;
 	unsigned long f_flag;
 };
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
 /* Misc utilities */
 //#define strcasestr(s1, s2) strstr((s1), (s2))  // Need to change!!
@@ -423,9 +423,9 @@ typedef void(*sighandler_t)(int);
  * Pick a more Windows friendly location for the config file
  *
  */
-#if defined(HP_mingw_BUILD) && defined(LTFS_CONFIG_FILE)
+#if defined(HPE_mingw_BUILD) && defined(LTFS_CONFIG_FILE)
 #undef LTFS_CONFIG_FILE
-#define LTFS_CONFIG_FILE "C:/ProgramData/Hewlett-Packard/LTFS/ltfs.conf"
+#define LTFS_CONFIG_FILE "C:/ProgramData/HPE/LTFS/ltfs.conf"
 #endif
 
 int _asprintf(char **strp, const char *fmt, ...);
@@ -450,18 +450,18 @@ char *strcasestr( const char* searchstr, const char* fromstr);
  *
  */
 struct tm *gmtime_libltfs(const time_t *timep, struct tm *result);
-#if defined(HP_mingw_BUILD) && !defined(strtok_r)
+#if defined(HPE_mingw_BUILD) && !defined(strtok_r)
 char *strtok_r(char *str, const char *delim, char **saveptr);
-#endif /* defined(HP_mingw_BUILD) && !defined(strtok_r) */
+#endif /* defined(HPE_mingw_BUILD) && !defined(strtok_r) */
 
 int win_ltfs_dummy(void);
 
-#if defined(HP_mingw_BUILD)
+#if defined(HPE_mingw_BUILD)
 int scandir(const char *dirp, 
             struct dirent ***namelist,
             int (*filter)(const struct dirent *entry),
             int (*compare)(const void* p1, const void* p2));
-#endif /* defined(HP_mingw_BUILD) */
+#endif /* defined(HPE_mingw_BUILD) */
 
 HANDLE shmget(int key, size_t size, int flag);
 void *shmat(HANDLE handle, void* addr, int flag);

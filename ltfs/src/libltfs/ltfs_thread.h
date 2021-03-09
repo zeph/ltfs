@@ -53,16 +53,16 @@
 extern "C" {
 #endif
 
-/* HP: We don't have access to this file. */
-#if !defined(HP_mingw_BUILD) && defined(mingw_PLATFORM)
+/* HPE: We don't have access to this file. */
+#if !defined(HPE_mingw_BUILD) && defined(mingw_PLATFORM)
 #include "arch/win/win_thread.h"
 #else
 
 #include <pthread.h>
 #include <sys/time.h>
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 #include <sys/syscall.h>
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 #include <unistd.h>
 
 typedef pthread_t          ltfs_thread_t;
@@ -197,7 +197,7 @@ static inline ltfs_thread_t ltfs_thread_self(void)
 
 #ifdef __APPLE__
 extern uint32_t ltfs_get_thread_id(void);
-#elif defined(HP_mingw_BUILD)
+#elif defined(HPE_mingw_BUILD)
 static inline void* ltfs_get_thread_id(void)
 {
 	return (pthread_self().p);

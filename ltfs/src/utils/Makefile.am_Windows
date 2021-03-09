@@ -44,7 +44,7 @@ noinst_HEADERS =
 
 mkltfs_SOURCES = mkltfs.c
 #
-# OSR/HP_mingw_BUILD
+# OSR/HPE_mingw_BUILD
 # 
 # In our MinGW environment, we dynamically link to the package 
 # data. 
@@ -55,7 +55,7 @@ mkltfs_CPPFLAGS = @AM_CPPFLAGS@ -I ..
 
 unltfs_SOURCES = unltfs.c
 #
-# OSR/HP_mingw_BUILD
+# OSR/HPE_mingw_BUILD
 # 
 # In our MinGW environment, we dynamically link to the package 
 # data. 
@@ -66,7 +66,7 @@ unltfs_CPPFLAGS = @AM_CPPFLAGS@ -I ..
 
 ltfsck_SOURCES = ltfsck.c
 #
-# OSR/HP_mingw_BUILD
+# OSR/HPE_mingw_BUILD
 # 
 # In our MinGW environment, we dynamically link to the package 
 # data. 

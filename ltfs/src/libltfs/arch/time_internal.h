@@ -100,12 +100,12 @@ int get_osx_current_timespec(struct ltfs_timespec* now);
 int get_timer_info(struct timer_info *ti);
 #define _get_current_timespec(timespec) get_osx_current_timespec(timespec)
 #define get_localtime(time) localtime(time)
-#elif defined(mingw_PLATFORM) && !defined(HP_mingw_BUILD)
+#elif defined(mingw_PLATFORM) && !defined(HPE_mingw_BUILD)
 int get_timer_info(struct timer_info *ti);
 #define _get_current_timespec(timespec) get_win32_current_timespec(timespec)
 #define get_localtime(time) get_win32_localtime(time)
 #define get_gmtime(time) get_win32_gmtime(time)
-#elif defined(HP_mingw_BUILD)
+#elif defined(HPE_mingw_BUILD)
 #define _get_current_timespec(timespec) get_win32_current_timespec(timespec)
 #define get_localtime(time) get_win32_localtime(time)
 #define get_gmtime(time) get_win32_gmtime(time)
@@ -165,17 +165,17 @@ inline static uint64_t get_time_stamp(_time_stamp_t* start)
 	return (uint64_t)(now - *start);
 }
 
-#elif defined(mingw_PLATFORM) && !defined(HP_mingw_BUILD)
-#else /* Linux */ /* Or if defined HP_mingw_BUILD */
+#elif defined(mingw_PLATFORM) && !defined(HPE_mingw_BUILD)
+#else /* Linux */ /* Or if defined HPE_mingw_BUILD */
 typedef struct timespec _time_stamp_t;
 
 inline static void __get_time(_time_stamp_t* t)
 {
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 	get_win32_current_timespec((struct ltfs_timespec *) t);
 #else
 	clock_gettime(CLOCK_MONOTONIC, t);
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 }
 
 inline static int get_timer_info(struct timer_info *ti)

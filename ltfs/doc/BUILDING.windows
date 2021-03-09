@@ -1,9 +1,9 @@
 =======================================================================
-Linear Tape File System (LTFS) - Version 3.0.0
+HPE StoreOpen Software (HPE-SOS) - Version 3.4.2
 =======================================================================
 
-Files in this download contain Licensed Materials, property of HP,
-(C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+Files in this download contain Licensed Materials, property of HPE,
+(C) Copyright 2015-2018 Hewlett Packard Enterprise Development LP
 
 Files in this download also contain Licensed Materials, property of OSR,
 Copyright (C) 2012 OSR Open Systems Resources, Inc. 
@@ -16,8 +16,8 @@ See the Licensing agreement (COPYING.LIB) when LTFS is downloaded.
 The LTFS software application is an open-source tape file system
 implemented on dual partition tape drives.
 
-Further details on LTFS implementation can be found at
- www.lto.org/technology/ltfs.html
+Further details on HPE's LTFS implementation can be found at
+www.hpe.com/storage/storeopen/
 
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!====================!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -27,7 +27,7 @@ Further details on LTFS implementation can be found at
 	To build LTFS on a Windows platform, there are a number of steps 
 	which must be followed carefully to set up the required build 
 	environment. The result is the complex build procedure set out below. 
-	Support cannot be provided to the customers who choose to attempt to build 
+	HPE cannot support customers who choose to attempt to build 
 	their own version of LTFS for Windows.
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!====================!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -37,7 +37,7 @@ Further details on LTFS implementation can be found at
 
 
 =======================================================================
-Building LTFS from source code (Windows)
+Building HPE-SOS from source code (Windows)
 =======================================================================
 
 1.  Creating an LTFS Build Machine
@@ -71,9 +71,9 @@ To install the MinGW packages:
  
  c)	Download the MinGW64 Win32 Tools and extract them to C:\MinGW\MinGW64-32
 
- d)	Copy the provided MinGW overlay directory (located at dependencies\mingw)
-	over the directory C:\MinGW to place necessary build files not provided 
-	by MinGW.
+ d)	Copy the provided MinGW overlay directory (located at 
+         dependencies\mingw) over the directory C:\MinGW to place necessary
+         build files not provided by MinGW.
 
 The LTFS for Windows source code has no binary dependencies on the FUSE package.
 However, the include files provided with FUSE must be available for proper
@@ -180,7 +180,7 @@ a.	Change path to prioritize x64 build utilities:
 
 b.	cd to /C/LTFS and execute the following command:
 	./configure --host=x86_64-w64-mingw32 --build=x86_64-w64-mingw32 \
-	CFLAGS="-Dmingw_PLATFORM=1 -DHP_mingw_BUILD=1 \
+	CFLAGS="-Dmingw_PLATFORM=1 -DHPE_mingw_BUILD=1 \
 	-I/C/MinGW/inc.external -I/C/UMFSDK/inc"
 
 c.	Build the source code by executing make.
@@ -198,7 +198,7 @@ a.	Change path to prioritize x86 build utilities:
 
 b.	cd to /C/LTFS and execute the following command:
 	./configure --host= i686-w64-mingw32 --build= i686-w64-mingw32 \
-	CFLAGS="-Dmingw_PLATFORM=1 -DHP_mingw_BUILD=1 -I/C/MinGW/inc.external \
+	CFLAGS="-Dmingw_PLATFORM=1 -DHPE_mingw_BUILD=1 -I/C/MinGW/inc.external \
 	-I/C/UMFSDK/inc -D __MINGW_USE_VC2005_COMPAT=1"
 
 c.	Build the source code by executing make.  

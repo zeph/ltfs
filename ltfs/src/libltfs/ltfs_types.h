@@ -99,6 +99,7 @@ struct dentry_attr {
 };
 
 struct tc_mam_attr {
+	unsigned char volumelockstate; /* The volumelockstate stored */
 	char *appl_vendor;		   /* The LTFS application vendor */
 	char *appl_name;		   /* The LTFS application name */
 	char *appl_ver;			   /* The LTFS application version */

@@ -44,209 +44,223 @@
 **                  bbiskebo@us.ibm.com
 **
 *************************************************************************************
+**
+**  (C) Copyright 2015 - 2017 Hewlett Packard Enterprise Development LP
+**  10/13/17 Added support for SNIA 2.4
+**
+*************************************************************************************
 */
 
 #ifndef __ltfs_error_h__
 #define __ltfs_error_h__
 
-#define LTFS_ERR_MIN              1000  /* First error value defined by this file */
-
-#define LTFS_NULL_ARG             1000  /* Unexpected NULL function argument */
-#define LTFS_NO_MEMORY            1001  /* Memory allocation failed */
-#define LTFS_MUTEX_INVALID        1002  /* Attempted to lock or unlock an uninitialized mutex */
-#define LTFS_MUTEX_UNLOCKED       1003  /* Attempted to unlock an already unlocked mutex */
-#define LTFS_BAD_DEVICE_DATA      1004  /* Invalid device data structure */
-#define LTFS_BAD_PARTNUM          1005  /* Invalid partition number requested */
-#define LTFS_LIBXML2_FAILURE      1006  /* A libxml2 call failed */
-#define LTFS_DEVICE_UNREADY       1007  /* Device is not ready */
-#define LTFS_NO_MEDIUM            1008  /* No medium present in the device */
-#define LTFS_LARGE_BLOCKSIZE      1009  /* Device does not support the formatted blocksize */
-#define LTFS_BAD_LOCATE           1010  /* Locate resulted in an unexpected position */
-#define LTFS_NOT_PARTITIONED      1011  /* Medium contains only one partition */
-#define LTFS_LABEL_INVALID        1012  /* Invalid partition label */
-#define LTFS_LABEL_MISMATCH       1013  /* Partition labels do not match */
-#define LTFS_INDEX_INVALID        1014  /* Invalid XML index or index backpointer chain. Recovery might be possible. */
-#define LTFS_INCONSISTENT         1015  /* Volume is inconsistent but recoverable */
-#define LTFS_UNSUPPORTED_MEDIUM   1016  /* Medium cannot be partitioned or is otherwise incompatible */
-#define LTFS_GENERATION_MISMATCH  1017  /* Index generation mismatch between cached copy and the tape */
-#define LTFS_MAM_CACHE_INVALID    1018  /* MAM cache is invalid */
-#define LTFS_INDEX_CACHE_INVALID  1019  /* Index Cache is invalid */
-#define LTFS_POLICY_EMPTY_RULE    1020  /* Empty name rule encountered during policy parsing */
-#define LTFS_MUTEX_INIT           1021  /* Mutex initialization failed */
-#define LTFS_BAD_ARG              1022  /* Generic error for an invalid function argument */
-#define LTFS_NAMETOOLONG          1023  /* A path name component was too long */
-#define LTFS_NO_DENTRY            1024  /* No such file or directory */
-#define LTFS_INVALID_PATH         1025  /* Path cannot be UTF-8 encoded or contains invalid characters */
-#define LTFS_INVALID_SRC_PATH     1026  /* Like LTFS_INVALID_PATH, but for paths the caller expects to exist */
-#define LTFS_DENTRY_EXISTS        1027  /* Target path exists and cannot remove it */
-#define LTFS_DIRNOTEMPTY          1028  /* Cannot remove non-empty directory */
-#define LTFS_UNLINKROOT           1029  /* Cannot remove the root directory */
-#define LTFS_DIRMOVE              1030  /* Cannot move directory due to MacFUSE bug */
-#define LTFS_RENAMELOOP           1031  /* Cannot rename directory underneath itself */
-#define LTFS_SMALL_BLOCK          1032  /* Block read from tape is smaller than expected */
-#define LTFS_ISDIRECTORY          1033  /* Operation is only valid on files */
-
-#define LTFS_EOD_MISSING_MEDIUM   1034  /* Medium has no EOD in one partition */
-#define LTFS_BOTH_EOD_MISSING     1035  /* Medium has no EOD in both partitions */
-#define LTFS_UNEXPECTED_VALUE     1036  /* Detect Unexpected Value in LTFS in itself */
-#define LTFS_UNSUPPORTED          1037  /* Call unsupported method */
-
-#define LTFS_NO_XATTR             1040  /* No extended attribute found */
-
-#define LTFS_SIG_HANDLER_ERR      1041  /* Failed to set signal handler */
-#define LTFS_INTERRUPTED          1042  /* Catch signals to terminate process */
+#define LTFS_ERR_MIN                   1000  /* First error value defined by this file */
+                                       
+#define LTFS_NULL_ARG                  1000  /* Unexpected NULL function argument */
+#define LTFS_NO_MEMORY                 1001  /* Memory allocation failed */
+#define LTFS_MUTEX_INVALID             1002  /* Attempted to lock or unlock an uninitialized mutex */
+#define LTFS_MUTEX_UNLOCKED            1003  /* Attempted to unlock an already unlocked mutex */
+#define LTFS_BAD_DEVICE_DATA           1004  /* Invalid device data structure */
+#define LTFS_BAD_PARTNUM               1005  /* Invalid partition number requested */
+#define LTFS_LIBXML2_FAILURE           1006  /* A libxml2 call failed */
+#define LTFS_DEVICE_UNREADY            1007  /* Device is not ready */
+#define LTFS_NO_MEDIUM                 1008  /* No medium present in the device */
+#define LTFS_LARGE_BLOCKSIZE           1009  /* Device does not support the formatted blocksize */
+#define LTFS_BAD_LOCATE                1010  /* Locate resulted in an unexpected position */
+#define LTFS_NOT_PARTITIONED           1011  /* Medium contains only one partition */
+#define LTFS_LABEL_INVALID             1012  /* Invalid partition label */
+#define LTFS_LABEL_MISMATCH            1013  /* Partition labels do not match */
+#define LTFS_INDEX_INVALID             1014  /* Invalid XML index or index backpointer chain. Recovery might be possible. */
+#define LTFS_INCONSISTENT              1015  /* Volume is inconsistent but recoverable */
+#define LTFS_UNSUPPORTED_MEDIUM        1016  /* Medium cannot be partitioned or is otherwise incompatible */
+#define LTFS_GENERATION_MISMATCH       1017  /* Index generation mismatch between cached copy and the tape */
+#define LTFS_MAM_CACHE_INVALID         1018  /* MAM cache is invalid */
+#define LTFS_INDEX_CACHE_INVALID       1019  /* Index Cache is invalid */
+#define LTFS_POLICY_EMPTY_RULE         1020  /* Empty name rule encountered during policy parsing */
+#define LTFS_MUTEX_INIT                1021  /* Mutex initialization failed */
+#define LTFS_BAD_ARG                   1022  /* Generic error for an invalid function argument */
+#define LTFS_NAMETOOLONG               1023  /* A path name component was too long */
+#define LTFS_NO_DENTRY                 1024  /* No such file or directory */
+#define LTFS_INVALID_PATH              1025  /* Path cannot be UTF-8 encoded or contains invalid characters */
+#define LTFS_INVALID_SRC_PATH          1026  /* Like LTFS_INVALID_PATH, but for paths the caller expects to exist */
+#define LTFS_DENTRY_EXISTS             1027  /* Target path exists and cannot remove it */
+#define LTFS_DIRNOTEMPTY               1028  /* Cannot remove non-empty directory */
+#define LTFS_UNLINKROOT                1029  /* Cannot remove the root directory */
+#define LTFS_DIRMOVE                   1030  /* Cannot move directory due to MacFUSE bug */
+#define LTFS_RENAMELOOP                1031  /* Cannot rename directory underneath itself */
+#define LTFS_SMALL_BLOCK               1032  /* Block read from tape is smaller than expected */
+#define LTFS_ISDIRECTORY               1033  /* Operation is only valid on files */
+                                       
+#define LTFS_EOD_MISSING_MEDIUM        1034  /* Medium has no EOD in one partition */
+#define LTFS_BOTH_EOD_MISSING          1035  /* Medium has no EOD in both partitions */
+#define LTFS_UNEXPECTED_VALUE          1036  /* Detect Unexpected Value in LTFS in itself */
+#define LTFS_UNSUPPORTED               1037  /* Call unsupported method */
+                                       
+#define LTFS_NO_XATTR                  1040  /* No extended attribute found */
+                                       
+#define LTFS_SIG_HANDLER_ERR           1041  /* Failed to set signal handler */
+#define LTFS_INTERRUPTED               1042  /* Catch signals to terminate process */
 
 #define LTFS_UNSUPPORTED_INDEX_VERSION 1043  /* Unsupported version is detected into index */
-#define LTFS_ICU_ERROR            1044  /* Received an unexpected error from ICU */
-#define LTFS_PLUGIN_LOAD          1045  /* Error while loading a plug-in */
-#define LTFS_PLUGIN_UNLOAD        1046  /* Error while unloading a plug-in */
-#define LTFS_RDONLY_XATTR         1047  /* Cannot modify read-only extended attribute */
-#define LTFS_XATTR_EXISTS         1048  /* EA exists, and the user asked not to overwrite it */
-#define LTFS_SMALL_BUFFER         1049  /* User-provided buffer is too small */
-#define LTFS_RDONLY_VOLUME        1050  /* Volume is in read-only mode */
-#define LTFS_NO_SPACE             1051  /* Volume is full */
-#define LTFS_LARGE_XATTR          1052  /* Extended attribute value is too large */
-#define LTFS_NO_INDEX             1053  /* Index search failed */
-#define LTFS_XATTR_NAMESPACE      1054  /* Requested EA namespace is not supported */
-#define LTFS_CONFIG_INVALID       1055  /* Config file parsing failed */
-#define LTFS_PLUGIN_INCOMPLETE    1056  /* Plug-in does not implement a required function */
-#define LTFS_NO_PLUGIN            1057  /* Requested plug-in is not known */
-#define LTFS_POLICY_INVALID       1058  /* Cannot parse policy string */
-#define LTFS_ISFILE               1059  /* Operation is only valid on directories */
-#define LTFS_UNRESOLVED_VOLUME    1060  /* Cannot find target tape volume */
-#define LTFS_POLICY_IMMUTABLE     1061  /* Data placement policy cannot be changed */
-#define LTFS_SMALL_BLOCKSIZE      1062  /* Block size is too small */
-#define LTFS_BARCODE_LENGTH       1063  /* Bar code has the wrong length */
-#define LTFS_BARCODE_INVALID      1064  /* Bar code contains invalid characters */
-#define LTFS_RESOURCE_SHORTAGE    1065  /* Available drives are not enough to move between tapes */
-#define LTFS_DEVICE_FENCED        1066  /* Device lock request denied */
-#define LTFS_REVAL_RUNNING        1067  /* Medium revalidation in progress */
-#define LTFS_REVAL_FAILED         1068  /* Medium revalidation failed */
-#define LTFS_SLOT_FULL            1069  /* Library is full slot condition */
-#define LTFS_SLOT_SHORTAGE        1070  /* Library is slot shortage condition */
-#define LTFS_CHANGER_ERROR        1071  /* Library is under error state */
-#define LTFS_UNEXPECTED_TAPE      1072  /* Unexpected tape medium was found */
-#define LTFS_NO_HOMESLOT          1073  /* No home slot is assigned */
-#define LTFS_MOVE_ACTIVE_CART     1074  /* Attempt to move active cartridge to IE slot */
-#define LTFS_NO_IE_SLOT           1075  /* There are no IE slots available */
-#define LTFS_INVALID_SLOT         1076  /* Invalid target is specified, cannot move tape to requested location */
-#define LTFS_UNSUPPORTED_CART     1077  /* Unsupported cartridge in LTFS */
-#define LTFS_CART_STUCKED         1078  /* Cartridge cannot be unload from drive */
-#define LTFS_OP_NOT_ALLOWED       1079  /* The operation is now allowed */
-#define LTFS_OP_TO_DUP            1080  /* This operation is not allowed to 'Duplicated' cartridge */
-#define LTFS_OP_TO_NON_SUP        1081  /* This operation is not allowed to 'Non-supported' cartridge */
-#define LTFS_OP_TO_INACC          1082  /* This operation is not allowed to 'Inaccessible' cartridge */
-#define LTFS_OP_TO_UNFMT          1083  /* This operation is not allowed to 'Unformatted' cartridge */
-#define LTFS_OP_TO_INV            1084  /* This operation is not allowed to 'Invalid' cartridge */
-#define LTFS_OP_TO_ERR            1085  /* This operation is not allowed to 'Error' cartridge */
-#define LTFS_OP_TO_CRIT           1086  /* This operation is not allowed to 'Critical' cartridge */
-#define LTFS_OP_TO_CLN            1087  /* This operation is not allowed to 'Cleaning' cartridge */
-#define LTFS_OP_TO_RO             1088  /* This operation is not allowed to read-only cartridge */
-#define LTFS_ALREADY_FS_INC       1089  /* This cartridge is already included in filesystem */
-#define LTFS_NOT_IN_FS            1090  /* This cartridge is not included in filesystem */
-#define LTFS_FS_CART_TO_IE        1091  /* Failed to move the cartridge to IE slot: need to remove the cartridge from filesystem*/
-#define LTFS_OP_TO_UNKN           1092  /* This operation is not allowed to bar code-less cartridge*/
-#define LTFS_DRV_LOCKED           1093  /* Failed to remove the drive: 'Critical' cartridge is loaded */
-#define LTFS_DRV_ALRDY_ADDED      1094  /* Failed to remove the drive: drive is already added */
-#define LTFS_FORCE_INVENTORY      1095  /* Unexpected inventory rebuild error (have to manage within LTFS itself) */
-#define LTFS_INVENTORY_FAILED     1096  /* Library fails to get inventory. Try to unmount LTFS and re-mount LTFS again */
-#define LTFS_RESTART_OPERATION    1097  /* Operation needs to be restarted */
-#define LTFS_NO_TARGET_DRIVE      1098  /* No target drive is found */
-#define LTFS_NO_DCACHE_FSTYPE     1099  /* No supported filesystem type for dcache in this system */
-#define LTFS_IMAGE_EXISTED        1100  /* The disk image is already existed */
-#define LTFS_IMAGE_MOUNTED        1101  /* The disk image is already mounted */
-#define LTFS_IMAGE_NOT_MOUNTED    1102  /* The disk image is not mounted */
-#define LTFS_MTAB_NOREGULAR       1103  /* /etc/mtab is not a regular file */
-#define LTFS_MTAB_OPEN            1104  /* Failed to open /etc/mtab */
-#define LTFS_MTAB_LOCK            1105  /* Failed to lock /etc/mtab */
-#define LTFS_MTAB_SEEK            1106  /* Failed to seek /etc/mtab */
-#define LTFS_MTAB_UPDATE          1107  /* Failed to update /etc/mtab */
-#define LTFS_MTAB_FLUSH           1108  /* Failed to flush /etc/mtab */
-#define LTFS_MTAB_UNLOCK          1109  /* Failed to unlock /etc/mtab */
-#define LTFS_MTAB_CLOSE           1110  /* Failed to close /etc/mtab */
-#define LTFS_MTAB_COPY            1111  /* Failed to copy /etc/mtab to temporary file */
-#define LTFS_MTAB_TEMP_OPEN       1112  /* Failed to open the temporary file for /etc/mtab */
-#define LTFS_MTAB_TEMP_SEEK       1113  /* Failed to seek the temporary file for /etc/mtab */
-#define LTFS_DCACHE_CREATION_FAIL 1114  /* Failed to create a directory tree to the disk image */
-#define LTFS_DCACHE_UNSUPPORTED   1115  /* Failed to cache dentry due to host filesystem's limitation */
-#define LTFS_DCACHE_EXTRA_SPACE   1116  /* The disk image reached to maximum size. */
-#define LTFS_KEY_NOT_FOUND        1117  /* Cannot find data key */
-#define LTFS_INVALID_SEQUENCE     1118  /* A function is called in invalid sequence */
-#define LTFS_RDONLY_ROOT          1119  /* Cannot update the root directory */
-#define LTFS_SYMLINK_CONFLICT     1120  /* Conflict symlink tag and extent tag in xml */
-#define LTFS_NETWORK_INIT_FAIL    1121  /* Failed to initialize the network connection for ltfsadmintool */
-#define LTFS_DRIVE_SHORTAGE       1122  /* Insufficient number of drives available for the operation */
-#define LTFS_INVALID_VOLSER       1123  /* Invalid volume serial number */
-#define LTFS_LESS_SPACE           1124  /* Volume has no space to write a file */
-#define LTFS_WRITE_PROTECT        1125  /* Volume is in physical and/or logical write protect mode */
-#define LTFS_WRITE_ERROR          1126  /* Write error has previously occurred on the current mount */
-#define LTFS_UNEXPECTED_BARCODE   1127  /* Unexpected length of barcode label is set on the cartridge */
-#define LTFS_STRING_CONVERSION    1128  /* Conversion from string to value is failed, may be invalid string */
-#define LTFS_SESSION_INIT_FAIL    1129  /* Failed to initialize admin session */
-#define LTFS_MESSAGE_INVALID      1130  /* Invalid message on admin_channel */
-#define LTFS_PASSWORD_INVALID     1131  /* Invalid password to login via admin_channel */
-#define LTFS_NOT_AUTHENTICATERD   1132  /* Not login yet */
-#define LTFS_WORM_DEEP_RECOVERY   1133  /* Deep recovery cannot be performed to a WORM cartridge */
-#define LTFS_WORM_ROLLBACK        1134  /* WORM cartridg cannot be rollbacked */
-#define LTFS_NONWORM_SALVAGE      1135  /* Salvage list is valid only for WORM cartridge */
-#define LTFS_FORMATTED            1136  /* Cartridge is already formatted */
-#define LTFS_RULES_WORM           1137  /* Placement policy cannot be set to WORM cartridge */
-#define LTFS_BAD_BLOCKSIZE        1138  /* Specified block size is not correct */
-#define LTFS_BAD_VOLNAME          1139  /* Specified volume name is not correct */
-#define LTFS_BAD_RULES            1140  /* Specified placement policy is not correct */
-#define LTFS_GEN_NEEDED           1141  /* Need to specify a genaration to be rollbacked */
-#define LTFS_BAD_GENERATION       1142  /* Specified generation is not correct */
-#define LTFS_NO_ROLLBACK_TARGET   1143  /* Rollback target generation is not specified */
-#define LTFS_MANY_INDEXES         1144  /* Multiple target indexes were found on the cartridge */
-#define LTFS_SALVAGE_NOT_NEEDED   1145  /* Salvage list is not required for this cartridge */
-#define LTFS_LOGICAL_WRITE_PROTECT 1146 /* Volume is in logical write protect mode i.e. in case of incompatible medium */
+#define LTFS_ICU_ERROR                 1044  /* Received an unexpected error from ICU */
+#define LTFS_PLUGIN_LOAD               1045  /* Error while loading a plug-in */
+#define LTFS_PLUGIN_UNLOAD             1046  /* Error while unloading a plug-in */
+#define LTFS_RDONLY_XATTR              1047  /* Cannot modify read-only extended attribute */
+#define LTFS_XATTR_EXISTS              1048  /* EA exists, and the user asked not to overwrite it */
+#define LTFS_SMALL_BUFFER              1049  /* User-provided buffer is too small */
+#define LTFS_RDONLY_VOLUME             1050  /* Volume is in read-only mode */
+#define LTFS_NO_SPACE                  1051  /* Volume is full */
+#define LTFS_LARGE_XATTR               1052  /* Extended attribute value is too large */
+#define LTFS_NO_INDEX                  1053  /* Index search failed */
+#define LTFS_XATTR_NAMESPACE           1054  /* Requested EA namespace is not supported */
+#define LTFS_CONFIG_INVALID            1055  /* Config file parsing failed */
+#define LTFS_PLUGIN_INCOMPLETE         1056  /* Plug-in does not implement a required function */
+#define LTFS_NO_PLUGIN                 1057  /* Requested plug-in is not known */
+#define LTFS_POLICY_INVALID            1058  /* Cannot parse policy string */
+#define LTFS_ISFILE                    1059  /* Operation is only valid on directories */
+#define LTFS_UNRESOLVED_VOLUME         1060  /* Cannot find target tape volume */
+#define LTFS_POLICY_IMMUTABLE          1061  /* Data placement policy cannot be changed */
+#define LTFS_SMALL_BLOCKSIZE           1062  /* Block size is too small */
+#define LTFS_BARCODE_LENGTH            1063  /* Bar code has the wrong length */
+#define LTFS_BARCODE_INVALID           1064  /* Bar code contains invalid characters */
+#define LTFS_RESOURCE_SHORTAGE         1065  /* Available drives are not enough to move between tapes */
+#define LTFS_DEVICE_FENCED             1066  /* Device lock request denied */
+#define LTFS_REVAL_RUNNING             1067  /* Medium revalidation in progress */
+#define LTFS_REVAL_FAILED              1068  /* Medium revalidation failed */
+#define LTFS_SLOT_FULL                 1069  /* Library is full slot condition */
+#define LTFS_SLOT_SHORTAGE             1070  /* Library is slot shortage condition */
+#define LTFS_CHANGER_ERROR             1071  /* Library is under error state */
+#define LTFS_UNEXPECTED_TAPE           1072  /* Unexpected tape medium was found */
+#define LTFS_NO_HOMESLOT               1073  /* No home slot is assigned */
+#define LTFS_MOVE_ACTIVE_CART          1074  /* Attempt to move active cartridge to IE slot */
+#define LTFS_NO_IE_SLOT                1075  /* There are no IE slots available */
+#define LTFS_INVALID_SLOT              1076  /* Invalid target is specified, cannot move tape to requested location */
+#define LTFS_UNSUPPORTED_CART          1077  /* Unsupported cartridge in LTFS */
+#define LTFS_CART_STUCKED              1078  /* Cartridge cannot be unload from drive */
+#define LTFS_OP_NOT_ALLOWED            1079  /* The operation is now allowed */
+#define LTFS_OP_TO_DUP                 1080  /* This operation is not allowed to 'Duplicated' cartridge */
+#define LTFS_OP_TO_NON_SUP             1081  /* This operation is not allowed to 'Non-supported' cartridge */
+#define LTFS_OP_TO_INACC               1082  /* This operation is not allowed to 'Inaccessible' cartridge */
+#define LTFS_OP_TO_UNFMT               1083  /* This operation is not allowed to 'Unformatted' cartridge */
+#define LTFS_OP_TO_INV                 1084  /* This operation is not allowed to 'Invalid' cartridge */
+#define LTFS_OP_TO_ERR                 1085  /* This operation is not allowed to 'Error' cartridge */
+#define LTFS_OP_TO_CRIT                1086  /* This operation is not allowed to 'Critical' cartridge */
+#define LTFS_OP_TO_CLN                 1087  /* This operation is not allowed to 'Cleaning' cartridge */
+#define LTFS_OP_TO_RO                  1088  /* This operation is not allowed to read-only cartridge */
+#define LTFS_ALREADY_FS_INC            1089  /* This cartridge is already included in filesystem */
+#define LTFS_NOT_IN_FS                 1090  /* This cartridge is not included in filesystem */
+#define LTFS_FS_CART_TO_IE             1091  /* Failed to move the cartridge to IE slot: need to remove the cartridge from filesystem*/
+#define LTFS_OP_TO_UNKN                1092  /* This operation is not allowed to bar code-less cartridge*/
+#define LTFS_DRV_LOCKED                1093  /* Failed to remove the drive: 'Critical' cartridge is loaded */
+#define LTFS_DRV_ALRDY_ADDED           1094  /* Failed to remove the drive: drive is already added */
+#define LTFS_FORCE_INVENTORY           1095  /* Unexpected inventory rebuild error (have to manage within LTFS itself) */
+#define LTFS_INVENTORY_FAILED          1096  /* Library fails to get inventory. Try to unmount LTFS and re-mount LTFS again */
+#define LTFS_RESTART_OPERATION         1097  /* Operation needs to be restarted */
+#define LTFS_NO_TARGET_DRIVE           1098  /* No target drive is found */
+#define LTFS_NO_DCACHE_FSTYPE          1099  /* No supported filesystem type for dcache in this system */
+#define LTFS_IMAGE_EXISTED             1100  /* The disk image is already existed */
+#define LTFS_IMAGE_MOUNTED             1101  /* The disk image is already mounted */
+#define LTFS_IMAGE_NOT_MOUNTED         1102  /* The disk image is not mounted */
+#define LTFS_MTAB_NOREGULAR            1103  /* /etc/mtab is not a regular file */
+#define LTFS_MTAB_OPEN                 1104  /* Failed to open /etc/mtab */
+#define LTFS_MTAB_LOCK                 1105  /* Failed to lock /etc/mtab */
+#define LTFS_MTAB_SEEK                 1106  /* Failed to seek /etc/mtab */
+#define LTFS_MTAB_UPDATE               1107  /* Failed to update /etc/mtab */
+#define LTFS_MTAB_FLUSH                1108  /* Failed to flush /etc/mtab */
+#define LTFS_MTAB_UNLOCK               1109  /* Failed to unlock /etc/mtab */
+#define LTFS_MTAB_CLOSE                1110  /* Failed to close /etc/mtab */
+#define LTFS_MTAB_COPY                 1111  /* Failed to copy /etc/mtab to temporary file */
+#define LTFS_MTAB_TEMP_OPEN            1112  /* Failed to open the temporary file for /etc/mtab */
+#define LTFS_MTAB_TEMP_SEEK            1113  /* Failed to seek the temporary file for /etc/mtab */
+#define LTFS_DCACHE_CREATION_FAIL      1114  /* Failed to create a directory tree to the disk image */
+#define LTFS_DCACHE_UNSUPPORTED        1115  /* Failed to cache dentry due to host filesystem's limitation */
+#define LTFS_DCACHE_EXTRA_SPACE        1116  /* The disk image reached to maximum size. */
+#define LTFS_KEY_NOT_FOUND             1117  /* Cannot find data key */
+#define LTFS_INVALID_SEQUENCE          1118  /* A function is called in invalid sequence */
+#define LTFS_RDONLY_ROOT               1119  /* Cannot update the root directory */
+#define LTFS_SYMLINK_CONFLICT          1120  /* Conflict symlink tag and extent tag in xml */
+#define LTFS_NETWORK_INIT_FAIL         1121  /* Failed to initialize the network connection for ltfsadmintool */
+#define LTFS_DRIVE_SHORTAGE            1122  /* Insufficient number of drives available for the operation */
+#define LTFS_INVALID_VOLSER            1123  /* Invalid volume serial number */
+#define LTFS_LESS_SPACE                1124  /* Volume has no space to write a file */
+#define LTFS_WRITE_PROTECT             1125  /* Volume is in physical and/or logical write protect mode */
+#define LTFS_WRITE_ERROR               1126  /* Write error has previously occurred on the current mount */
+#define LTFS_UNEXPECTED_BARCODE        1127  /* Unexpected length of barcode label is set on the cartridge */
+#define LTFS_STRING_CONVERSION         1128  /* Conversion from string to value is failed, may be invalid string */
+#define LTFS_SESSION_INIT_FAIL         1129  /* Failed to initialize admin session */
+#define LTFS_MESSAGE_INVALID           1130  /* Invalid message on admin_channel */
+#define LTFS_PASSWORD_INVALID          1131  /* Invalid password to login via admin_channel */
+#define LTFS_NOT_AUTHENTICATERD        1132  /* Not login yet */
+#define LTFS_WORM_DEEP_RECOVERY        1133  /* Deep recovery cannot be performed to a WORM cartridge */
+#define LTFS_WORM_ROLLBACK             1134  /* WORM cartridg cannot be rollbacked */
+#define LTFS_NONWORM_SALVAGE           1135  /* Salvage list is valid only for WORM cartridge */
+#define LTFS_FORMATTED                 1136  /* Cartridge is already formatted */
+#define LTFS_RULES_WORM                1137  /* Placement policy cannot be set to WORM cartridge */
+#define LTFS_BAD_BLOCKSIZE             1138  /* Specified block size is not correct */
+#define LTFS_BAD_VOLNAME               1139  /* Specified volume name is not correct */
+#define LTFS_BAD_RULES                 1140  /* Specified placement policy is not correct */
+#define LTFS_GEN_NEEDED                1141  /* Need to specify a genaration to be rollbacked */
+#define LTFS_BAD_GENERATION            1142  /* Specified generation is not correct */
+#define LTFS_NO_ROLLBACK_TARGET        1143  /* Rollback target generation is not specified */
+#define LTFS_MANY_INDEXES              1144  /* Multiple target indexes were found on the cartridge */
+#define LTFS_SALVAGE_NOT_NEEDED        1145  /* Salvage list is not required for this cartridge */
+#define LTFS_LOGICAL_WRITE_PROTECT     1146  /* Volume is in logical write protect mode i.e. in case of incompatible medium */
+#define LTFS_POS_SUSPECT_BOP           1147  /* HPE MD 24/11/17 If a write FM is attempted at BOP partition 0 */
 
 /* 1150 - 1190 are reserved for LE+ usage */
-#define LTFS_CARTRIDGE_NOT_FOUND  1150  /* Cannot find cartridge */
-#define LTFS_CACHE_LOCK_ERR       1151  /* Cannot lock cache files */
-#define LTFS_CACHE_UNLOCK_ERR     1152  /* Cannot lock cache files */
-#define LTFS_CREPO_FILE_ERR       1153  /* File operation error (cartridge repo) */
-#define LTFS_CREPO_READ_ERR       1154  /* Read error (cartridge repo) */
-#define LTFS_CREPO_WRITE_ERR      1155  /* Write error (cartridge repo) */
-#define LTFS_CREPO_INVALID_OP     1156  /* Invalid operation(invalid arg, op, etc) */
-#define LTFS_FILE_ERR             1157  /* Error in file operation (mkdir,stat,rename, etc) */
-#define LTFS_CARTRIDGE_IN_USE     1158  /* Cannot use the cartridge */
-#define LTFS_NO_LOCK_ENTRY        1159  /* Cannot find lock entry */
-#define LTFS_MOUNT_ERR            1160  /* Cannot mount/unmount */
-#define LTFS_NO_DEVICE            1161  /* Cannot find device */
-#define LTFS_XATTR_ERR            1162  /* Failed to set/get Extended Attribute */
-#define LTFS_FTW_ERR              1163  /* Failed to perform file tree walk */
-#define LTFS_TIME_ERR             1164  /* Failed to update time stamp */
-#define LTFS_NOT_BLOCK_DEVICE     1165  /* Block device is required */
-#define LTFS_QUOTA_EXCEEDED       1166  /* Disk quota exceeded */
-#define LTFS_TOO_MANY_OPEN_FILES  1167  /* Too many open files in system */
-#define LTFS_LINKDIR_EXISTS       1168  /* Link dir exists */
-#define LTFS_NO_DMAP_ENTRY        1169  /* No dmap entry */
-#define LTFS_RECOVERABLE_FILE_ERR 1170  /* Recoverable Error in file operation (mkdir, stat, rename, etc) */
-#define LTFS_NO_DCACHE_SPC        1171  /* Failed to expabd dcache space */
-#define LTFS_CREPO_UNAVAILABLE    1172  /* Repository Unavailable (cart's state read error) */
-#define LTFS_CREPO_OUT_OF_SYNC    1173  /* Repository Out-of-sync (isolated from EE cluster) */
-#define LTFS_NODE_STATUS_ERR      1174  /* Failed to get staus of node */
-#define LTFS_OUT_OF_SYNC          1175  /* Node is in out-of-sync state */
-#define LTFS_CACHE_SYNC_FAILED    1176  /* Index cache sync failure */
-#define LTFS_DCACHE_SYNC_FAILED   1177  /* Dentry cache sync failure */
-#define LTFS_CREPOS_SYNC_FAILED   1178  /* Cart repos sync failure */
-#define LTFS_NO_MULTINODE_CONFIG  1179  /* Multi node config file is not found */
-#define LTFS_MULTINODE_FILE_ERR   1180  /* Failed to manupilate multi node config file */
-#define LTFS_CACHE_DISCARDED      1181  /* Cache is corrupted and discarded */
-#define LTFS_LONG_WRITE_LOCK      1182  /* Long MRSW for write is aquired */
-#define LTFS_INCOMPATIBLE_CACHE   1183  /* Incompatible cache file is detected */
-#define LTFS_DCACHE_NOT_INITIALIZED 1184 /* Dcache is not initialized yet */
-#define LTFS_CONFIG_FILE_WLOCKED  1185  /* The multinode config file is locked */
-#define LTFS_CREATE_QUEUE         1186  /* Failed to create POSIX message pueue */
-#define LTFS_FORK_ERROR           1187  /* Failed to fork process */
-#define LTFS_NOACK                1188  /* No ack message is received from child process */
-#define LTFS_NODE_DETECT_FAIL     1189  /* Node type detection is failed */
-#define LTFS_INVALID_MESSAGE      1190  /* Invalid message is detected in node detection */
-#define LTFS_NODE_DEGATE_FAIL     1191  /* Failed to degate other nodes */
-#define LTFS_CLUSTER_MRSW_FAIL    1192  /* Failed to opetate against a cluster wide lock */
+#define LTFS_CARTRIDGE_NOT_FOUND       1150  /* Cannot find cartridge */
+#define LTFS_CACHE_LOCK_ERR            1151  /* Cannot lock cache files */
+#define LTFS_CACHE_UNLOCK_ERR          1152  /* Cannot lock cache files */
+#define LTFS_CREPO_FILE_ERR            1153  /* File operation error (cartridge repo) */
+#define LTFS_CREPO_READ_ERR            1154  /* Read error (cartridge repo) */
+#define LTFS_CREPO_WRITE_ERR           1155  /* Write error (cartridge repo) */
+#define LTFS_CREPO_INVALID_OP          1156  /* Invalid operation(invalid arg, op, etc) */
+#define LTFS_FILE_ERR                  1157  /* Error in file operation (mkdir,stat,rename, etc) */
+#define LTFS_CARTRIDGE_IN_USE          1158  /* Cannot use the cartridge */
+#define LTFS_NO_LOCK_ENTRY             1159  /* Cannot find lock entry */
+#define LTFS_MOUNT_ERR                 1160  /* Cannot mount/unmount */
+#define LTFS_NO_DEVICE                 1161  /* Cannot find device */
+#define LTFS_XATTR_ERR                 1162  /* Failed to set/get Extended Attribute */
+#define LTFS_FTW_ERR                   1163  /* Failed to perform file tree walk */
+#define LTFS_TIME_ERR                  1164  /* Failed to update time stamp */
+#define LTFS_NOT_BLOCK_DEVICE          1165  /* Block device is required */
+#define LTFS_QUOTA_EXCEEDED            1166  /* Disk quota exceeded */
+#define LTFS_TOO_MANY_OPEN_FILES       1167  /* Too many open files in system */
+#define LTFS_LINKDIR_EXISTS            1168  /* Link dir exists */
+#define LTFS_NO_DMAP_ENTRY             1169  /* No dmap entry */
+#define LTFS_RECOVERABLE_FILE_ERR      1170  /* Recoverable Error in file operation (mkdir, stat, rename, etc) */
+#define LTFS_NO_DCACHE_SPC             1171  /* Failed to expabd dcache space */
+#define LTFS_CREPO_UNAVAILABLE         1172  /* Repository Unavailable (cart's state read error) */
+#define LTFS_CREPO_OUT_OF_SYNC         1173  /* Repository Out-of-sync (isolated from EE cluster) */
+#define LTFS_NODE_STATUS_ERR           1174  /* Failed to get staus of node */
+#define LTFS_OUT_OF_SYNC               1175  /* Node is in out-of-sync state */
+#define LTFS_CACHE_SYNC_FAILED         1176  /* Index cache sync failure */
+#define LTFS_DCACHE_SYNC_FAILED        1177  /* Dentry cache sync failure */
+#define LTFS_CREPOS_SYNC_FAILED        1178  /* Cart repos sync failure */
+#define LTFS_NO_MULTINODE_CONFIG       1179  /* Multi node config file is not found */
+#define LTFS_MULTINODE_FILE_ERR        1180  /* Failed to manupilate multi node config file */
+#define LTFS_CACHE_DISCARDED           1181  /* Cache is corrupted and discarded */
+#define LTFS_LONG_WRITE_LOCK           1182  /* Long MRSW for write is aquired */
+#define LTFS_INCOMPATIBLE_CACHE        1183  /* Incompatible cache file is detected */
+#define LTFS_DCACHE_NOT_INITIALIZED    1184 /* Dcache is not initialized yet */
+#define LTFS_CONFIG_FILE_WLOCKED       1185  /* The multinode config file is locked */
+#define LTFS_CREATE_QUEUE              1186  /* Failed to create POSIX message pueue */
+#define LTFS_FORK_ERROR                1187  /* Failed to fork process */
+#define LTFS_NOACK                     1188  /* No ack message is received from child process */
+#define LTFS_NODE_DETECT_FAIL          1189  /* Node type detection is failed */
+#define LTFS_INVALID_MESSAGE           1190  /* Invalid message is detected in node detection */
+#define LTFS_NODE_DEGATE_FAIL          1191  /* Failed to degate other nodes */
+#define LTFS_CLUSTER_MRSW_FAIL         1192  /* Failed to opetate against a cluster wide lock */
 
-#define LTFS_ERR_MAX              19999
+/* Using from 1300 - 1304 for Volume Advisory locking */
+#define LTFS_VOLUME_LOCKED		       1300  /* Volume is locked (Volume Advisory Locking) */
+#define LTFS_VOLUME_WRITEERRLOCKED     1301 /* Volume is locked due to write error (Volume Advisory Locking) */
+#define LTFS_VOLUME_PERMLOCKED	       1302  /* Volume is permanently locked	(Volume Advisory Locking) */
+// HPE MD 29.09.2017 Added the following two to suppot SNIA 2.4 Vol advisory locking
+#define LTFS_VOLUME_DP_WRITEERRLOCKED  1303  /* Volume is permanently locked	(Volume Advisory Locking) */
+#define LTFS_VOLUME_IP_WRITEERRLOCKED  1304  /* Volume is permanently locked	(Volume Advisory Locking) */
+
+#define LTFS_ERR_MAX                   19999
 
 /*
  * Tape drive (or lower driver) errors (20000 - 29999)

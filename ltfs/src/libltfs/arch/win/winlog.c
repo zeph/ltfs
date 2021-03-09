@@ -64,7 +64,7 @@
  * Include the header defining our Event Log message
  *    
  */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 #include "ltfs_msgs.h"
 #endif
 
@@ -80,7 +80,7 @@ void vsyslog(int priority, const char *format, va_list ap)
      * need to change those to %I
      *    
      */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
     char format_buf[OUTPUT_BUF_SIZE];
     char *buf_ptr;
 
@@ -134,7 +134,7 @@ void vsyslog(int priority, const char *format, va_list ap)
      * (we have a string for that message ID as a binary resource)
      *    
      */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
     if (wType == EVENTLOG_ERROR_TYPE) {
         HANDLE h = RegisterEventSource(NULL, "LTFS");
         msg = strchr(output_buf, ' ');

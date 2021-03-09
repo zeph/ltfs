@@ -45,7 +45,7 @@
 **
 *************************************************************************************
 **
-**  (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+**  (C) Copyright 2015, 2016 Hewlett Packard Enterprise Development LP
 **  07/06/10 Added definitions for a new MAM attribute (EWSTATE) to track when 
 **            Early Warning EOM is encountered. Also for Application Name attribute.
 **
@@ -258,6 +258,9 @@ typedef enum {
 
 #define TC_MAM_BARCODE     			 0x0806 /* Page code for Custom Barcode Name */
 #define TC_MAM_BARCODE_LEN 			 32
+
+#define TC_MAM_VOL_LOCK_STATE		 0x1623 /* Page code for Volume Lock State */
+#define TC_MAM_VOL_LOCK_STATE_LEN	 1
 
 /*
  * Vendor-unique attribute 0x1500 is used to mark a tape that has passed EWEOM on writes
@@ -532,7 +535,23 @@ struct tape_ops {
 	 */
 	int   (*unload)(void *device, struct tc_position *pos);
 
-	/**
+        /**
+        * HPE Change - CR 11358 - Add a more flexible means of loading and unload.
+        * Load or unload medium to/from a device.
+        * @param device Device handle returned by the backend's open().
+        * @param pos Pointer to a tc_position structure. The backend must fill this structure with
+        *            the final logical block position of the device, even on error.
+        *            libltfs does not depend on any particular position being set here.
+        * @param load Whether to load (TRUE) or unload (FALSE)
+        * @param hold Whether to partially load/unload (TRUE) or fully (FALSE)
+        * @return 0 on success or a negative value on error.
+        *         If no medium is present in the device, the backend must return -EDEV_NO_MEDIUM.
+        *         If the medium is unsupported (for example, does not support two partitions),
+        *         the backend should return -LTFS_UNSUPPORTED_MEDIUM.
+        */
+        int (*loadunload)(void *device, struct tc_position *pos, bool load, bool hold);
+
+        /**
 	 * Read logical position (partition and logical block) from a device.
 	 * @param device Device handle returned by the backend's open().
 	 * @param pos Pointer to a tc_position structure. On success, the backend must fill this
@@ -562,7 +581,8 @@ struct tape_ops {
 	 *                 is TC_FORMAT_DEST_PART/TC_FORMAT_PARTITION.
 	 * @return 0 on success or a negative value on error.
 	 */
-	int   (*format)(void *device, TC_FORMAT_TYPE format, const char *vol_name, const char *barcode_name);
+	int   (*format)(void *device, TC_FORMAT_TYPE format, const char *vol_name, const char *barcode_name,
+			const char *vol_mam_uuid);
 
 	/**
 	 * Get capacity data from a device.
@@ -871,10 +891,16 @@ struct tape_ops {
 	 * @param format Type of format.
 	 * @param vol_name An optional volume name.
 	 * @param attribute_id Identifier's of individual MAM attributes
+	 * @param barcode_name The volume barcode name
+	 * @param lockbit volume lock state bit to be set in MAM
 	 * @return 0 on success or a negative value on error.
 	 */
-	int   (*update_mam_attr)(void *device, TC_FORMAT_TYPE format,
-			const char *vol_name, unsigned int attribute_id, const char *barcode_name);
+	int   (*update_mam_attr)(void *device,
+							 TC_FORMAT_TYPE format,
+							 const char *vol_name,
+							 unsigned int attribute_id,
+							 const char *barcode_name,
+							 unsigned lockbit);
 };
 
 /**

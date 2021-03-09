@@ -6,7 +6,7 @@
 **
 ** CONTENTS:        Main body of ltotape LTFS backend
 **
-** (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+** (C) Copyright 2015 - 2017 Hewlett Packard Enterprise Development LP
 **
 ** This program is free software; you can redistribute it and/or modify it
 **  under the terms of version 2.1 of the GNU Lesser General Public License
@@ -27,6 +27,10 @@
 **
 *************************************************************************************
 **
+**  10/13/17 Added support for LTO8 media
+**
+*************************************************************************************
+**
 ** Copyright (C) 2012 OSR Open Systems Resources, Inc.
 ** 
 ************************************************************************************* 
@@ -34,19 +38,33 @@
 
 #define __ltotape_c
 
+// Need to get these two first because of varying dependencies on different platforms..
+#include "ltotape.h"
 #include "ltotape_diag.h"
+
 #include <inttypes.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
-#include "ltfsprintf.h"
-#include "ltotape.h"
 
 #include "libltfs/ltfs_fuse_version.h"
+#include "ltfsprintf.h"
 #include "libltfs/ltfs.h"
+
 #include <fuse.h>
+#include <fuse_opt.h>
+
+/*
+ * If these aren't already defined or imported (from IBM_tape.h for example) then
+ *  define them now:
+ */
+#ifndef ALL_MEDIA_DENSITY
+# define ALL_MEDIA_DENSITY     0
+# define CURRENT_MEDIA_DENSITY 1
+# define LOGSENSEPAGE          1024
+#endif
 
 /*
  * Prototype declarations for functions exposed by the backend :
@@ -64,8 +82,9 @@ int ltotape_rewind(void *device, struct tc_position *pos);
 int ltotape_erase(void *device, struct tc_position *pos, bool ltotape_erase);
 int ltotape_load(void *device, struct tc_position *pos);
 int ltotape_unload(void *device, struct tc_position *pos);
+int ltotape_ext_loadunload (void *device, struct tc_position *pos, bool load, bool hold);
 int ltotape_readposition (void *device, struct tc_position *pos);
-int ltotape_format(void *device, TC_FORMAT_TYPE format, const char *vol_name, const char *barcode_name);
+int ltotape_format(void *device, TC_FORMAT_TYPE format, const char *vol_name, const char *barcode_name, const char *vol_mam_uuid);
 int ltotape_logsense(void *device, const uint8_t page, unsigned char *buf, const size_t size);
 int ltotape_remaining_capacity(void *device, struct tc_remaining_cap *cap);
 int ltotape_modesense(void *device, const uint8_t page, const TC_MP_PC_TYPE pc, const uint8_t subpage, unsigned char *buf, const size_t size);
@@ -83,7 +102,7 @@ int ltotape_get_cartridge_health(void *device, struct tc_cartridge_health *cart_
 int ltotape_get_tape_alert (void *device, uint64_t* taflags);
 int ltotape_get_eod_status(void *device, int part);
 int ltotape_get_parameters(void *device, struct tc_drive_param *drive_param);
-int ltotape_update_mam_attr(void *device, TC_FORMAT_TYPE FORMAT, const char *vol_name, unsigned int attribute_id, const char *barcode_name);
+int ltotape_update_mam_attr(void *device, TC_FORMAT_TYPE FORMAT, const char *vol_name, unsigned int attribute_id, const char *barcode_name, mam_lockval lockbit);
 int ltotape_get_worm_status(void *device, bool *is_worm);
 void ltotape_help_message(const char *progname);
 
@@ -105,13 +124,13 @@ int ltotape_evpd_inquiry(void *device, int vpdpage, unsigned char* idata, int il
 /*
  * The following are "internal" private functions only
  */
-static int ltotape_loadunload(void *device, int do_load, struct tc_position *pos);
+static int ltotape_loadunload(void *device, bool do_load, bool do_hold);
 static int ltotape_prevent_allow_medium_removal(void *device, int prevent);
 static int _cdb_read(void *device, char *buf, size_t count, bool silion);
 static int _cdb_write(void *device, const char *buf, size_t count);
 static int parse_logPage(const unsigned char *logdata, const uint16_t param, int *param_size, unsigned char *buf, const size_t bufsize);
 static int null_parser(void *priv, const char *arg, int key, struct fuse_args *outargs);
-static int ltotape_set_MAMattributes (void* device, TC_FORMAT_TYPE format, const char *vol_name, unsigned int attribute_id, const char *barcode_name);
+static int ltotape_set_MAMattributes (void* device, TC_FORMAT_TYPE format, const char *vol_name, unsigned int attribute_id, const char *barcode_name, mam_lockval lockbit, const char *vol_mam_uuid);
 
 /*
  * Declare a (static) array to maintain volume statistics.  Used below in
@@ -151,28 +170,26 @@ static struct fuse_opt ltotape_opts[] = {
  * @param bufsize Size of the buffer
  * @return 0 on success, -1 if param not found, -2 if found but too big to fit in buffer
  */
-static int parse_logPage(const unsigned char *logdata, const uint16_t param, int *param_size,
-                         unsigned char *buf, const size_t bufsize)
+static int parse_logPage(const unsigned char *logdata, const uint16_t param, int *param_size, unsigned char *buf, const size_t bufsize)
 {
-  uint16_t page_len, param_code, param_len;
-  long i;
+  uint16_t page_len = 0, param_code = 0, param_len = 0;
+  long i = 0;
   
   page_len = ((uint16_t) logdata[2] << 8) + (uint16_t) logdata[3];
   i = LOG_PAGE_HEADER_SIZE;
   
-  while (i < page_len) {
+  while (i < (long)page_len) {
     param_code = ((uint16_t) logdata[i] << 8) + (uint16_t) logdata[i + 1];
     param_len = (uint16_t) logdata[i + LOG_PAGE_PARAMSIZE_OFFSET];
     if (param_code == param) {
       *param_size = param_len;
       if (bufsize < param_len) {
-	ltfsmsg(LTFS_ERR, "20036E", bufsize, i + LOG_PAGE_PARAM_OFFSET);
-	memcpy(buf, &logdata[i + LOG_PAGE_PARAM_OFFSET], bufsize);
-	return -2;
-      }
-      else {
-	memcpy(buf, &logdata[i + LOG_PAGE_PARAM_OFFSET], param_len);
-	return 0;
+        ltfsmsg(LTFS_ERR, "20036E", bufsize, i + LOG_PAGE_PARAM_OFFSET);
+        memcpy(buf, &logdata[i + LOG_PAGE_PARAM_OFFSET], bufsize);
+        return -2;
+      } else {
+        memcpy(buf, &logdata[i + LOG_PAGE_PARAM_OFFSET], param_len);
+        return 0;
       }
     }
     i += param_len + LOG_PAGE_PARAM_OFFSET;
@@ -199,13 +216,13 @@ static int null_parser(void *priv, const char *arg, int key, struct fuse_args *o
  */
 int ltotape_is_connected(const char *devname)
 {
-	struct stat statbuf;
+  struct stat statbuf;
 
-	/*
-	 * We assume that /dev is handled by a daemon such as Udev and that
-	 * device entries are automatically removed and added upon hotplug events.
-	 */
-	return stat(devname, &statbuf);
+/*
+ * We assume that /dev is handled by a daemon such as Udev and that
+ * device entries are automatically removed and added upon hotplug events.
+ */
+  return stat(devname, &statbuf);
 }
 
 /**
@@ -217,41 +234,43 @@ int ltotape_is_connected(const char *devname)
  */
 int ltotape_parse_opts(void *device, void *opt_args)
 {
-	int					ret = DEVICE_GOOD;
-	struct fuse_args	*args = (struct fuse_args *) opt_args;
-	struct stat 		statbuf;
-	char *path = NULL;
+  int               ret  = DEVICE_GOOD;
+  struct fuse_args *args = (struct fuse_args *) opt_args;
+  struct stat       statbuf;
+  char             *path = NULL;
 
-	/* initialize to our default place */
-	((ltotape_scsi_io_type*) device)->logdir = ltotape_get_default_snapshotdir();
-	/* by default we WILL limit blocksize (see ltotape_get_params) */
-	((ltotape_scsi_io_type*) device)->unlimited_blocksize = 0;
+  /* initialize to our default place */
+  ((ltotape_scsi_io_type*) device)->logdir = ltotape_get_default_snapshotdir();
 
-	CHECK_ARG_NULL(device, -LTFS_NULL_ARG);
-	ret = fuse_opt_parse(args, device, ltotape_opts, null_parser);
-	if (ret < 0) {
-		ltfsmsg(LTFS_ERR, "20037E", ret);
-		return ret;
-	}
+  /* by default we WILL limit blocksize (see ltotape_get_params) */
+  ((ltotape_scsi_io_type*) device)->unlimited_blocksize = 0;
 
-	path = calloc(1, strlen(((ltotape_scsi_io_type*) device)->logdir) + 1);
-	strcpy(path, ((ltotape_scsi_io_type*) device)->logdir);
-	/* Remove trailing back-slash for stat to work in windows */
-	if (path[strlen(path) - 1] == '\\')
-		path[strlen(path) - 1] = '\0';
+  CHECK_ARG_NULL(device, -LTFS_NULL_ARG);
+  ret = fuse_opt_parse(args, device, ltotape_opts, null_parser);
+  if (ret < 0) {
+    ltfsmsg(LTFS_ERR, "20037E", ret);
+    return ret;
+  }
 
-	/* Check for a valid log-directory path (if set through fuse-parse options */
-	ret = stat(path, &statbuf);
+  path = calloc(1, strlen(((ltotape_scsi_io_type*) device)->logdir) + 1);
+  strcpy(path, ((ltotape_scsi_io_type*) device)->logdir);
+  /* Remove trailing back-slash for stat to work in windows */
+  if (path[strlen(path) - 1] == '\\') {
+    path[strlen(path) - 1] = '\0';
+  }
 
-	if (ret < 0 || ! S_ISDIR(statbuf.st_mode)) {
-		/* Invalid log-directory path, setting back to default log-directory */
-		ltfsmsg(LTFS_WARN, "20104W", ((ltotape_scsi_io_type*)device)->logdir);
-		((ltotape_scsi_io_type*)device)->logdir = ltotape_get_default_snapshotdir();
-		ret = 0;
-	}
+  /* Check for a valid log-directory path (if set through fuse-parse options */
+  ret = stat(path, &statbuf);
 
-	free(path);
-	return ret;
+  if (ret < 0 || ! S_ISDIR(statbuf.st_mode)) {
+    /* Invalid log-directory path, setting back to default log-directory */
+    ltfsmsg(LTFS_WARN, "20104W", ((ltotape_scsi_io_type*)device)->logdir);
+    ((ltotape_scsi_io_type*)device)->logdir = ltotape_get_default_snapshotdir();
+    ret = 0;
+  }
+
+  free(path);
+  return ret;
 }
 
 /**------------------------------------------------------------------------**
@@ -274,7 +293,7 @@ int ltotape_test_unit_ready (void *device)
   sio->cdb[4] = 0;
   sio->cdb[5] = 0;
 
-  sio->cdb_length = 6;		/* six-byte cdb */
+  sio->cdb_length = 6;          /* six-byte cdb */
 
 /*
  * Set up the data part:
@@ -284,8 +303,7 @@ int ltotape_test_unit_ready (void *device)
   sio->data_direction = NO_TRANSFER;
 
   /* Set the timeout then execute: */
-  sio->timeout_ms = (sio->family == drivefamily_lto) ?
-     LTO_TESTUNITREADY_TIMEOUT : DAT_TESTUNITREADY_TIMEOUT;
+  sio->timeout_ms = (sio->family == drivefamily_lto) ? LTO_TESTUNITREADY_TIMEOUT : DAT_TESTUNITREADY_TIMEOUT;
 
   /* If it failed, and the sense data implies no medium present, adjust return value accordingly: */
   retval = ltotape_scsiexec(sio);
@@ -301,7 +319,7 @@ int ltotape_test_unit_ready (void *device)
  * @param inq pointer to inquiry data. This function will update this valure
  * @return 0 on success or negative value on error
  */
-int ltotape_inquiry(void *device, struct tc_inq *inq)
+int ltotape_inquiry (void *device, struct tc_inq *inq)
 {
   ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
   unsigned char        inqbuffer [240];
@@ -319,7 +337,7 @@ int ltotape_inquiry(void *device, struct tc_inq *inq)
   sio->cdb[4] = (unsigned char) sizeof(inqbuffer);
   sio->cdb[5] = 0;
 
-  sio->cdb_length = 6;		/* six-byte cdb */
+  sio->cdb_length = 6;          /* six-byte cdb */
 
 /*
  * Set up the data part:
@@ -362,15 +380,14 @@ int ltotape_inquiry(void *device, struct tc_inq *inq)
  * @param inq The inquiry data.
  * @return int DEVICE_GOOD on success, a -ve error on failure.
  */
-int ltotape_inquiry_page(void *device, unsigned char page,
-		struct tc_inq_page *inq)
+int ltotape_inquiry_page(void *device, unsigned char page, struct tc_inq_page *inq)
 {
-	int						rc = DEVICE_GOOD;
-	ltotape_scsi_io_type	*sio = (ltotape_scsi_io_type *) device;
+  int                   rc = DEVICE_GOOD;
+  ltotape_scsi_io_type *sio = (ltotape_scsi_io_type *) device;
 
-	CHECK_ARG_NULL(sio, -EDEV_INVALID_ARG);
+  CHECK_ARG_NULL(sio, -EDEV_INVALID_ARG);
 
-	return rc;
+  return rc;
 }
 
 /**
@@ -384,7 +401,7 @@ int ltotape_inquiry_page(void *device, unsigned char page,
 int ltotape_evpd_inquiry(void *device, int vpdpage, unsigned char* idata, int ilen)
 {
   ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
-  int                  status;
+  int                  status = 0;
 
   memset(idata, 0, ilen);
 
@@ -398,7 +415,7 @@ int ltotape_evpd_inquiry(void *device, int vpdpage, unsigned char* idata, int il
   sio->cdb[4] = (unsigned char)(ilen & 0xFF);
   sio->cdb[5] = 0;
 
-  sio->cdb_length = 6;		/* six-byte cdb */
+  sio->cdb_length = 6;          /* six-byte cdb */
 
 /*
  * Set up the data part:
@@ -422,7 +439,7 @@ int ltotape_evpd_inquiry(void *device, int vpdpage, unsigned char* idata, int il
 static int _cdb_read(void *device, char *buf, size_t count, bool silion)
 {
   ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
-  int                  status;
+  int                  status = 0;
 
 /*
  * Set up the cdb:
@@ -434,7 +451,7 @@ static int _cdb_read(void *device, char *buf, size_t count, bool silion)
   sio->cdb[4] = (unsigned char) (count & 0xFF);
   sio->cdb[5] = 0;
 
-  sio->cdb_length = 6;		/* six-byte cdb */
+  sio->cdb_length = 6;          /* six-byte cdb */
 
 /*
  * Set up the data part:
@@ -472,7 +489,7 @@ static int _cdb_read(void *device, char *buf, size_t count, bool silion)
 static int _cdb_write(void *device, const char *buf, size_t count)
 {
   ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
-  int                  status;
+  int                   status = 0;
 
 /*
  * Set up the cdb:
@@ -484,7 +501,7 @@ static int _cdb_write(void *device, const char *buf, size_t count)
   sio->cdb[4] = (unsigned char) (count & 0xFF);
   sio->cdb[5] = 0;
 
-  sio->cdb_length = 6;		/* six-byte cdb */
+  sio->cdb_length = 6;          /* six-byte cdb */
 
 /*
  * Set up the data part:
@@ -513,59 +530,60 @@ static int _cdb_write(void *device, const char *buf, size_t count)
  */
 int ltotape_read(void *device, char *buf, size_t count, struct tc_position *pos, const bool unusual_size)
 {
-	int rc = 0;
+  int rc = 0;
 
-	ltfsmsg(LTFS_DEBUG, "20039D", "read", count);
+  ltfsmsg(LTFS_DEBUG, "20039D", "read", count);
 
-	rc = _cdb_read(device, buf, count, unusual_size);
-	if (rc < 0) {
-		rc = (errno == 0) ? -EIO : -errno; // Force an errorcode if none is set..
-		switch (rc) {
-				// General errors
-			case -EBUSY:
-				ltfsmsg(LTFS_ERR, "20040E", "read");
-				break;
-			case -EFAULT:
-				ltfsmsg(LTFS_ERR, "20041E", "read");
-				ltotape_log_snapshot (device, FALSE);
-				break;
-			case -EIO:
-				ltfsmsg(LTFS_ERR, "20042E", "read");
-				ltotape_log_snapshot (device, FALSE);
-				break;
-			case -ENOMEM:
-				ltfsmsg(LTFS_ERR, "20043E", "read");
-				break;
-			case -ENXIO:
-				ltfsmsg(LTFS_ERR, "20044E", "read");
-				break;
-			case -EPERM:
-				ltfsmsg(LTFS_ERR, "20045E", "read");
-				ltotape_log_snapshot (device, FALSE);
-				break;
-			case -ETIMEDOUT:
-				ltfsmsg(LTFS_ERR, "20046E", "read");
-				ltotape_log_snapshot (device, FALSE);
-				break;
-				// read specific errors
-			case -EINVAL:
-				ltfsmsg(LTFS_ERR, "20047E", "read");
-				ltotape_log_snapshot (device, FALSE);
-				break;
-			case -EAGAIN:
-			        ltfsmsg(LTFS_ERR, "20055E", "read");
-				ltotape_log_snapshot (device, FALSE);
-				break;
-			default:
-				ltfsmsg(LTFS_ERR, "20054E", "read", -rc);
-				break;
-		}
-	}
-	else {
-		pos->block++;
-	}
+  rc = _cdb_read(device, buf, count, unusual_size);
+  if (rc < 0) {
+    rc = (errno == 0) ? -EIO : -errno; // Force an errorcode if none is set..
+    switch (rc) {
+    // General errors
+      case -EBUSY:
+        ltfsmsg(LTFS_ERR, "20040E", "read");
+        break;
+      case -EFAULT:
+        ltfsmsg(LTFS_ERR, "20041E", "read");
+        ltotape_log_snapshot (device, FALSE);
+        break;
+      case -EIO:
+        ltfsmsg(LTFS_ERR, "20042E", "read");
+        ltotape_log_snapshot (device, FALSE);
+        break;
+      case -ENOMEM:
+        ltfsmsg(LTFS_ERR, "20043E", "read");
+        break;
+      case -ENXIO:
+        ltfsmsg(LTFS_ERR, "20044E", "read");
+        break;
+      case -EPERM:
+        ltfsmsg(LTFS_ERR, "20045E", "read");
+        ltotape_log_snapshot (device, FALSE);
+        break;
+      case -ETIMEDOUT:
+        ltfsmsg(LTFS_ERR, "20046E", "read");
+        ltotape_log_snapshot (device, FALSE);
+        break;
+  
+    // Read specific errors
+      case -EINVAL:
+        ltfsmsg(LTFS_ERR, "20047E", "read");
+        ltotape_log_snapshot (device, FALSE);
+        break;
+      case -EAGAIN:
+        ltfsmsg(LTFS_ERR, "20055E", "read");
+        ltotape_log_snapshot (device, FALSE);
+        break;
+      default:
+        ltfsmsg(LTFS_ERR, "20054E", "read", -rc);
+        break;
+    }
 
-	return rc;
+  } else {
+    pos->block++;
+  }
+
+  return rc;
 }
 
 /**------------------------------------------------------------------------**
@@ -579,72 +597,73 @@ int ltotape_read(void *device, char *buf, size_t count, struct tc_position *pos,
  */
 int ltotape_write(void *device, const char *buf, size_t count, struct tc_position *pos)
 {
-	int rc;
-	ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
+  int                   rc = 0;
+  ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
 
-	ltfsmsg(LTFS_DEBUG, "20039D", "write", count);
+  ltfsmsg(LTFS_DEBUG, "20039D", "write", count);
 
-	rc = _cdb_write (device, buf, count);
+  rc = _cdb_write (device, buf, count);
 
-	if (rc < 0) {
-		rc = (errno == 0) ? -EIO : -errno; // Force an errorcode if none is set..
+  if (rc < 0) {
+    rc = (errno == 0) ? -EIO : -errno; // Force an errorcode if none is set..
 
-		switch (rc) {
-				// General errors
-			case -EBUSY:
-				ltfsmsg(LTFS_ERR, "20040E", "write");
-				ltotape_log_snapshot (device, FALSE);
-				break;
-			case -EFAULT:
-				ltfsmsg(LTFS_ERR, "20041E", "write");
-				ltotape_log_snapshot (device, FALSE);
-				break;
-			case -EIO:
-				ltfsmsg(LTFS_ERR, "20042E", "write");
-				ltotape_log_snapshot (device, FALSE);
-				break;
-			case -ENOMEM:
-				ltfsmsg(LTFS_ERR, "20043E", "write");
-				break;
-			case -ENXIO:
-				ltfsmsg(LTFS_ERR, "20044E", "write");
-				break;
-			case -EPERM:
-				ltfsmsg(LTFS_ERR, "20045E", "write");
-				break;
-			case -ETIMEDOUT:
-				ltfsmsg(LTFS_ERR, "20046E", "write");
-				ltotape_log_snapshot (device, FALSE);
-				break;
-				// write specific errors
-			case -EINVAL:
-				ltfsmsg(LTFS_ERR, "20047E", "write");
-				ltotape_log_snapshot (device, FALSE);
-				break;
-			case -ENOSPC:
-				ltfsmsg(LTFS_WARN, "20048W", "write");
-				pos->early_warning = true;
-				break;
-			default:
-				ltfsmsg(LTFS_ERR, "20054E", "write", -rc);
-				break;
-		}
+    switch (rc) {
+    // General errors
+      case -EBUSY:
+        ltfsmsg(LTFS_ERR, "20040E", "write");
+        ltotape_log_snapshot (device, FALSE);
+        break;
+      case -EFAULT:
+        ltfsmsg(LTFS_ERR, "20041E", "write");
+        ltotape_log_snapshot (device, FALSE);
+        break;
+      case -EIO:
+        ltfsmsg(LTFS_ERR, "20042E", "write");
+        ltotape_log_snapshot (device, FALSE);
+        break;
+      case -ENOMEM:
+        ltfsmsg(LTFS_ERR, "20043E", "write");
+        break;
+      case -ENXIO:
+        ltfsmsg(LTFS_ERR, "20044E", "write");
+        break;
+      case -EPERM:
+        ltfsmsg(LTFS_ERR, "20045E", "write");
+        break;
+      case -ETIMEDOUT:
+        ltfsmsg(LTFS_ERR, "20046E", "write");
+        ltotape_log_snapshot (device, FALSE);
+        break;
 
-	} else {
-	   pos->block++;
-/*
- * If we have just reached the EWEOM point, we need to report it now.
- *  We also modify the flag to indicate that we have reported it and
- *  are now writing "in the zone"..
- */
-	   if (sio->eweomstate == report_eweom) {
-	     ltfsmsg(LTFS_WARN, "20048W", "write");
-	     pos->early_warning = true;
-	     sio->eweomstate = after_eweom;
-	   }
-	}
+    // write specific errors
+      case -EINVAL:
+        ltfsmsg(LTFS_ERR, "20047E", "write");
+        ltotape_log_snapshot (device, FALSE);
+        break;
+      case -ENOSPC:
+        ltfsmsg(LTFS_WARN, "20048W", "write");
+        pos->early_warning = true;
+        break;
+      default:
+        ltfsmsg(LTFS_ERR, "20054E", "write", -rc);
+        break;
+    }
 
-	return rc;
+  } else {
+      pos->block++;
+  /*
+  * If we have just reached the EWEOM point, we need to report it now.
+  *  We also modify the flag to indicate that we have reported it and
+  *  are now writing "in the zone"..
+  */
+      if (sio->eweomstate == report_eweom) {
+        ltfsmsg(LTFS_WARN, "20048W", "write");
+        pos->early_warning = true;
+        sio->eweomstate = after_eweom;
+      }
+  }
+
+  return rc;
 }
 
 /**------------------------------------------------------------------------**
@@ -662,6 +681,20 @@ int ltotape_writefm(void *device, size_t count, struct tc_position *pos, bool im
 
   ltfsmsg(LTFS_DEBUG, "20056D", "write file marks", count);
 
+   /* HPE MD 24/11/2017 Have seen issues with an index overwriting the vol label at BOP 
+           The following read position is to try and avoid that happening. */
+           
+        rc = ltotape_readposition (device, pos);   
+        
+  if (rc < 0) {
+           return rc;
+
+  } else if ((pos->block == 0) && (pos->filemarks == 0)) {
+           ltfsmsg(LTFS_ERR, "20105E");
+           return -LTFS_POS_SUSPECT_BOP;
+        }
+  
+
 /*
  * Set up the cdb:
  */
@@ -672,7 +705,7 @@ int ltotape_writefm(void *device, size_t count, struct tc_position *pos, bool im
   sio->cdb[4] = (unsigned char)  (count & 0xFF           );
   sio->cdb[5] = (unsigned char) 0;
 
-  sio->cdb_length = 6;		/* six-byte cdb */
+  sio->cdb_length = 6;          /* six-byte cdb */
 
 /*
  * Set up the data part:
@@ -704,7 +737,7 @@ int ltotape_writefm(void *device, size_t count, struct tc_position *pos, bool im
 int ltotape_rewind(void *device, struct tc_position *pos)
 {
   ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
-  int          status;
+  int                   status = 0;
 
 /*
  * Set up the cdb for rewind:
@@ -715,7 +748,7 @@ int ltotape_rewind(void *device, struct tc_position *pos)
   sio->cdb[3] = 0;
   sio->cdb[4] = 0;
   sio->cdb[5] = 0;
-  sio->cdb_length = 6;		/* six-byte cdb */
+  sio->cdb_length = 6;          /* six-byte cdb */
 
 /*
  * Set up the data part:
@@ -748,7 +781,7 @@ int ltotape_rewind(void *device, struct tc_position *pos)
 int ltotape_locate(void *device, struct tc_position dest, struct tc_position *pos)
 {
   ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
-  int          status;
+  int                   status = 0;
 
   ltfsmsg(LTFS_DEBUG, "20057D", "locate", (unsigned long long)dest.partition, (unsigned long long)dest.block);
 
@@ -773,7 +806,7 @@ int ltotape_locate(void *device, struct tc_position dest, struct tc_position *po
       sio->cdb[14] = 0;
       sio->cdb[15] = 0;
 
-      sio->cdb_length = 16;		/* sixteen-byte cdb */
+      sio->cdb_length = 16;             /* sixteen-byte cdb */
 
   } else {  /* not lto, must be dat */
       sio->cdb[0]  = CMDlocate;
@@ -787,7 +820,7 @@ int ltotape_locate(void *device, struct tc_position dest, struct tc_position *po
       sio->cdb[8]  = (unsigned char) (dest.partition & 0xFF);
       sio->cdb[9]  = 0;
 
-      sio->cdb_length = 10;		/* ten-byte cdb */
+      sio->cdb_length = 10;             /* ten-byte cdb */
   }
 
 /*
@@ -814,12 +847,12 @@ int ltotape_locate(void *device, struct tc_position dest, struct tc_position *po
         status = 0;
 
      } else if ((dest.block == 0) && (SENSE_IS_BLANK_CHECK_NOEOD(sio->sensedata))) {
-	ltfsmsg(LTFS_DEBUG, "20021D");
-	status = 0;
-			 
+        ltfsmsg(LTFS_DEBUG, "20021D");
+        status = 0;
+                         
      } else {
         ltfsmsg(LTFS_ERR, "20064E", status);
-	ltotape_log_snapshot (device, FALSE);
+        ltotape_log_snapshot (device, FALSE);
      }
   }
 
@@ -839,8 +872,8 @@ int ltotape_locate(void *device, struct tc_position dest, struct tc_position *po
 int ltotape_space(void *device, size_t count, TC_SPACE_TYPE type, struct tc_position *pos)
 {
   ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
-  int                  status;
-  int                  spacecount;
+  int                   status = 0;
+  int                   spacecount = 0;
 
 /*
  * Set up the cdb:
@@ -848,37 +881,36 @@ int ltotape_space(void *device, size_t count, TC_SPACE_TYPE type, struct tc_posi
   sio->cdb[0] = CMDspace;
   sio->cdb[5] = 0;
 
-  sio->cdb_length = 6;		/* six-byte cdb */
+  sio->cdb_length = 6;          /* six-byte cdb */
 
   spacecount = (int) count;
 
   switch (type) {
     case TC_SPACE_EOD:
-	ltfsmsg(LTFS_DEBUG, "20058D", "Space to EOD");
+        ltfsmsg(LTFS_DEBUG, "20058D", "Space to EOD");
         sio->cdb[1] = 0x03;
         break;
     case TC_SPACE_FM_F:
-	ltfsmsg(LTFS_DEBUG, "20059D", "space forward file marks", (unsigned long long)count);
+        ltfsmsg(LTFS_DEBUG, "20059D", "space forward file marks", (unsigned long long)count);
         sio->cdb[1] = 0x01;
-	break;
+        break;
     case TC_SPACE_FM_B:
-	ltfsmsg(LTFS_DEBUG, "20059D", "space back file marks", (unsigned long long)count);
+        ltfsmsg(LTFS_DEBUG, "20059D", "space back file marks", (unsigned long long)count);
         spacecount = -spacecount;
         sio->cdb[1] = 0x01;
         break;
     case TC_SPACE_F:
-	ltfsmsg(LTFS_DEBUG, "20059D", "space forward records", (unsigned long long)count);
-	sio->cdb[1] = 0x0;
-	break;
+        ltfsmsg(LTFS_DEBUG, "20059D", "space forward records", (unsigned long long)count);
+        sio->cdb[1] = 0x0;
+        break;
     case TC_SPACE_B:
-	ltfsmsg(LTFS_DEBUG, "20059D", "space back records", (unsigned long long)count);
+        ltfsmsg(LTFS_DEBUG, "20059D", "space back records", (unsigned long long)count);
         spacecount = -spacecount;
-	sio->cdb[1] = 0x0;
+        sio->cdb[1] = 0x0;
         break;
     default:
-        ltfsmsg(LTFS_ERR, "20065E", type);	/* unexpected space type */
-        status = -EINVAL;
-        return status;
+        ltfsmsg(LTFS_ERR, "20065E", type);      /* unexpected space type */
+        return -EINVAL;
   }
 
   sio->cdb[2] = (unsigned char) (spacecount >> 16);
@@ -915,7 +947,7 @@ int ltotape_space(void *device, size_t count, TC_SPACE_TYPE type, struct tc_posi
 int ltotape_erase(void *device, struct tc_position *pos, bool long_erase)
 {
   ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
-  int                  status;
+  int                   status = 0;
 /*
  * Set up the cdb:
  */
@@ -926,7 +958,7 @@ int ltotape_erase(void *device, struct tc_position *pos, bool long_erase)
   sio->cdb[4] = 0;
   sio->cdb[5] = 0;
 
-  sio->cdb_length = 6;		/* six-byte cdb */
+  sio->cdb_length = 6;          /* six-byte cdb */
 
 /*
  * Set up the data part:
@@ -952,25 +984,28 @@ int ltotape_erase(void *device, struct tc_position *pos, bool long_erase)
 /**------------------------------------------------------------------------**
  * Load or unload tape 
  * @param device a pointer to the ltotape backend
- * @param do_load specifies whether to load (!=0) or unload (==0)
- * @param pos a pointer to position data. This function will update position infomation.
+ * @param do_load specifies whether to load (TRUE) or unload (FALSE)
+ * @param do_hold specifies whether to fully load/unload (FALSE) or only partial (TRUE)
  * @return 0 on success or a negative value on error
  */
-static int ltotape_loadunload(void *device, int do_load, struct tc_position *pos)
+static int ltotape_loadunload (void *device, bool do_load, bool do_hold)
 {
   ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
 
 /*
  * Set up the cdb:
  */
-  sio->cdb[0] = CMDload;		/* also does unloads! */
+  sio->cdb[0] = CMDload;                /* also does unloads! */
   sio->cdb[1] = 0;
   sio->cdb[2] = 0;
   sio->cdb[3] = 0;
-  sio->cdb[4] = (do_load) ? 1 : 0;
+  sio->cdb[4] = 0;
   sio->cdb[5] = 0;
 
-  sio->cdb_length = 6;		/* six-byte cdb */
+  if (do_load) sio->cdb[4] |= 0x01;
+  if (do_hold) sio->cdb[4] |= 0x08;
+
+  sio->cdb_length = 6;          /* six-byte cdb */
 
 /*
  * Set up the data part:
@@ -1012,7 +1047,7 @@ int ltotape_load(void *device, struct tc_position *pos)
     * in Explorer. We do that by sending a readposition and
       checking for a no media error, which is pretty quck
    */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
    int           read_pos_status;
    /* Read the position */
    read_pos_status = ltotape_readposition (device, pos);
@@ -1022,7 +1057,7 @@ int ltotape_load(void *device, struct tc_position *pos)
        return read_pos_status;
 #endif   
 
-   status = ltotape_loadunload (device, 1, pos);
+   status = ltotape_loadunload (device, TRUE, FALSE);  /* TRUE to load, FALSE to load fully (not hold)*/
 
    ltotape_readposition (device, pos);
 
@@ -1041,25 +1076,30 @@ int ltotape_load(void *device, struct tc_position *pos)
          return status;
 
       } else {
-        /* media type comprises density code from the block descriptor + WORMM bit from mode data */
-        mediatype = (int)buf[8] + ((int)(buf[18] & 0x01) << 8);
-        switch (mediatype) {
-       case LTOMEDIATYPE_LTO7RW  : pMediaName = "LTO7RW";   status = 0;  break;
-       case LTOMEDIATYPE_LTO7WORM: pMediaName = "LTO7WORM"; status = -1; break;
-	   case LTOMEDIATYPE_LTO6RW  : pMediaName = "LTO6RW";   status = 0;  break; 
-	   case LTOMEDIATYPE_LTO6WORM: pMediaName = "LTO6WORM"; status = -1; break;
-	   case LTOMEDIATYPE_LTO5RW  : pMediaName = "LTO5RW";   status = 0;  break; 
-	   case LTOMEDIATYPE_LTO5WORM: pMediaName = "LTO5WORM"; status = -1; break;
-	   case LTOMEDIATYPE_LTO4RW  : pMediaName = "LTO4RW";   status = -1; break;
-	   case LTOMEDIATYPE_LTO4WORM: pMediaName = "LTO4WORM"; status = -1; break;
-	   case LTOMEDIATYPE_LTO3RW  : pMediaName = "LTO3RW";   status = -1; break;
-	   case LTOMEDIATYPE_LTO3WORM: pMediaName = "LTO3WORM"; status = -1; break;
-	   default:                    pMediaName = "Unknown";  status = -1; break;
-	 }
+         /* media type comprises density code from the block descriptor + WORMM bit from mode data */
+         mediatype = (int)buf[8] + ((int)(buf[18] & 0x01) << 8);
+         switch (mediatype) {
+            case LTOMEDIATYPE_LTO8RW    : pMediaName = "LTO8RW";    status = 0;  break;
+            case LTOMEDIATYPE_LTO8WORM  : pMediaName = "LTO8WORM";  status = -1; break;
+            case LTOMEDIATYPE_LTO8TYPEM : pMediaName = "LTO8TYPEM"; status = 0;  break;  
+            case LTOMEDIATYPE_LTO7RW    : pMediaName = "LTO7RW";    status = 0;  break;
+            case LTOMEDIATYPE_LTO7WORM  : pMediaName = "LTO7WORM";  status = -1; break;
+            case LTOMEDIATYPE_LTO6RW    : pMediaName = "LTO6RW";    status = 0;  break; 
+            case LTOMEDIATYPE_LTO6WORM  : pMediaName = "LTO6WORM";  status = -1; break;
+            case LTOMEDIATYPE_LTO5RW    : pMediaName = "LTO5RW";    status = 0;  break; 
+            case LTOMEDIATYPE_LTO5WORM  : pMediaName = "LTO5WORM";  status = -1; break;
+            case LTOMEDIATYPE_LTO4RW    : pMediaName = "LTO4RW";    status = -1; break;
+            case LTOMEDIATYPE_LTO4WORM  : pMediaName = "LTO4WORM";  status = -1; break;
+            case LTOMEDIATYPE_LTO3RW    : pMediaName = "LTO3RW";    status = -1; break;
+            case LTOMEDIATYPE_LTO3WORM  : pMediaName = "LTO3WORM";  status = -1; break;
+            default:                      pMediaName = "Unknown";   status = -1; break;
+         }
+
          if (status < 0) {
             ltfsmsg(LTFS_ERR, "20062E", pMediaName);
             return -LTFS_UNSUPPORTED_MEDIUM;
          }
+
          return status;
       }
    }
@@ -1073,12 +1113,84 @@ int ltotape_load(void *device, struct tc_position *pos)
  */
 int ltotape_unload(void *device, struct tc_position *pos)
 {
-   int status = ltotape_loadunload (device, 0, pos);
-
+   int status = ltotape_loadunload (device, FALSE, FALSE);   /* FALSE to unload, FALSE to unload fully (not hold)*/
+   
    ltotape_readposition (device, pos);
-
    return status;
 }
+
+/**------------------------------------------------------------------------**
+* Load or unload a cartridge, with the option to specify that the operation
+*  should leave the cartridge in the HOLD state (partial load/unload).
+* This is therefore more than a bit similar to the preceding (legacy) functions,
+*  but the ability to specify the HOLD state is important in some cases.  Also
+*  this does not check for ENOMEDIUM on a load, so that a load will be attempted
+*  even if no cartridge is currently loaded / threaded.  Whether or not that 
+*  is wise or will succeed is beyond our control here.
+* 
+* @param device a pointer to the ltotape backend
+* @param pos a pointer to position data. This function will update position infomation.
+* @param load TRUE if load is required, FALSE if unload
+* @param hold TRUE if cart should be left in hold position, FALSE if full load/unload
+* @return 0 on success or a negative value on error
+*/
+int ltotape_ext_loadunload (void *device, struct tc_position *pos, bool load, bool hold)
+{
+  int           status;
+  unsigned char buf[64];
+  int           mediatype;
+  const char*   pMediaName;
+
+  status = ltotape_loadunload (device, load, hold);
+
+  ltotape_readposition (device, pos);
+
+  if (status < 0) {
+    return status;
+
+/*
+ * CR11492: If doing an unload, don't check the media type because it's
+ *          (a) not guaranteed to be accurate, and (b) not useful anyway!
+ */
+  } else if (load == FALSE) {
+    return 0;
+
+  } else {
+    status = ltotape_modesense (device, MODE_PAGE_MEDIUM_CONFIGURATION, TC_MP_PC_CURRENT, 0x00, buf, sizeof (buf));
+
+    if (status < 0) {
+      return status;
+
+    } else {
+      /* media type comprises density code from the block descriptor + WORMM bit from mode data */
+      mediatype = (int)buf[8] + ((int)(buf[18] & 0x01) << 8);
+      switch (mediatype) {
+      case LTOMEDIATYPE_LTO8RW:    pMediaName = "LTO8RW";    status = 0;  break;
+      case LTOMEDIATYPE_LTO8WORM:  pMediaName = "LTO8WORM";  status = -1; break;
+      case LTOMEDIATYPE_LTO8TYPEM: pMediaName = "LTO8TYPEM"; status = 0;  break;
+      case LTOMEDIATYPE_LTO7RW:    pMediaName = "LTO7RW";    status = 0;  break;
+      case LTOMEDIATYPE_LTO7WORM:  pMediaName = "LTO7WORM";  status = -1; break;
+      case LTOMEDIATYPE_LTO6RW:    pMediaName = "LTO6RW";    status = 0;  break;
+      case LTOMEDIATYPE_LTO6WORM:  pMediaName = "LTO6WORM";  status = -1; break;
+      case LTOMEDIATYPE_LTO5RW:    pMediaName = "LTO5RW";    status = 0;  break;
+      case LTOMEDIATYPE_LTO5WORM:  pMediaName = "LTO5WORM";  status = -1; break;
+      case LTOMEDIATYPE_LTO4RW:    pMediaName = "LTO4RW";    status = -1; break;
+      case LTOMEDIATYPE_LTO4WORM:  pMediaName = "LTO4WORM";  status = -1; break;
+      case LTOMEDIATYPE_LTO3RW:    pMediaName = "LTO3RW";    status = -1; break;
+      case LTOMEDIATYPE_LTO3WORM:  pMediaName = "LTO3WORM";  status = -1; break;
+      default:                     pMediaName = "Unknown";   status = -1; break;
+      }
+
+      if (status < 0) {
+        ltfsmsg (LTFS_ERR, "20062E", pMediaName);
+        return -LTFS_UNSUPPORTED_MEDIUM;
+      }
+
+      return status;
+    }
+  }
+}
+
 
 /**------------------------------------------------------------------------**
  * Tell a current position
@@ -1108,7 +1220,7 @@ int ltotape_readposition (void *device, struct tc_position *pos)
   sio->cdb[8] = 0;
   sio->cdb[9] = 0;
 
-  sio->cdb_length = 10;		/* ten-byte cdb */
+  sio->cdb_length = 10;         /* ten-byte cdb */
 
 /*
  * Set up the data part:
@@ -1125,32 +1237,31 @@ int ltotape_readposition (void *device, struct tc_position *pos)
 
   if (status == 0) {
      pos->partition = ((tape_partition_t) buf[4] << 24) + ((tape_partition_t) buf[5] << 16) +
-		      ((tape_partition_t) buf[6] <<  8) +  (tape_partition_t) buf[7];
+                      ((tape_partition_t) buf[6] <<  8) +  (tape_partition_t) buf[7];
 
      pos->block =     ((tape_block_t) buf[8]  << 56)    + ((tape_block_t) buf[9]  << 48) +
                       ((tape_block_t) buf[10] << 40)    + ((tape_block_t) buf[11] << 32) +
-		      ((tape_block_t) buf[12] << 24)    + ((tape_block_t) buf[13] << 16) + 
+                      ((tape_block_t) buf[12] << 24)    + ((tape_block_t) buf[13] << 16) + 
                       ((tape_block_t) buf[14] <<  8)    +  (tape_block_t) buf[15];
 
      pos->filemarks = ((tape_block_t) buf[16] << 56)    + ((tape_block_t) buf[17] << 48) +
                       ((tape_block_t) buf[18] << 40)    + ((tape_block_t) buf[19] << 32) +
                       ((tape_block_t) buf[20] << 24)    + ((tape_block_t) buf[21] << 16) +
                       ((tape_block_t) buf[22] <<  8)    +  (tape_block_t) buf[23];
-		
-     ltfsmsg(LTFS_DEBUG, "20060D", 
-	     (unsigned long long)pos->partition, (unsigned long long)pos->block, (unsigned long long)pos->filemarks);
+                
+    ltfsmsg (LTFS_DEBUG, "20060D", (unsigned long long)pos->partition, (unsigned long long)pos->block, (unsigned long long)pos->filemarks);
   
   } else {
      if (SENSE_IS_NO_MEDIA(sio->sensedata)) {
 #ifdef __APPLE__
-	 status = -EAGAIN;
+         status = -EAGAIN;
 #else
-	 status = -ENOMEDIUM;
+         status = -ENOMEDIUM;
 #endif
 
-     } else {
-        ltfsmsg(LTFS_ERR, "20066E", status);
-	ltotape_log_snapshot (device, FALSE);
+     } else {     
+            ltfsmsg(LTFS_ERR, "20066E", status);
+                 ltotape_log_snapshot (device, FALSE);
      }
   }
 
@@ -1166,12 +1277,12 @@ int ltotape_readposition (void *device, struct tc_position *pos)
  */
 int ltotape_setcap(void *device, uint16_t proportion)
 {
-	int						rc = DEVICE_GOOD;
-	ltotape_scsi_io_type	*sio = (ltotape_scsi_io_type *) device;
+  int                   rc = DEVICE_GOOD;
+  ltotape_scsi_io_type *sio = (ltotape_scsi_io_type *) device;
 
-	CHECK_ARG_NULL(sio, -EDEV_INVALID_ARG);
+  CHECK_ARG_NULL(sio, -EDEV_INVALID_ARG);
 
-	return rc;
+  return rc;
 }
 
 /**
@@ -1182,52 +1293,98 @@ int ltotape_setcap(void *device, uint16_t proportion)
  * @param barcode_name If LTFS format then an optional barcode name.
  * @return 0 on success, a negative value on error.
  */
-int ltotape_format(void *device, TC_FORMAT_TYPE format, const char *vol_name, const char *barcode_name)
+int ltotape_format (void *device, TC_FORMAT_TYPE format, const char *vol_name, const char *barcode_name, const char *vol_mam_uuid)
 {
-	int						status = 0;
-	ltotape_scsi_io_type	*sio = (ltotape_scsi_io_type*)device;
+  int                   status = 0;
+  ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
+  unsigned char         mam_buf [40]; /* 32 bytes plus 5 bytes header, rounded up to long word boundary */
+  char                  currentBarcode [36];
+  int                   i;
+  int                   alreadyGotBarcode = 0;
 
-	if ((unsigned char) format >= (unsigned char) TC_FORMAT_MAX) {
-		ltfsmsg(LTFS_ERR, "20067E", format);
-		return -1;
-	}
+  if ((unsigned char)format >= (unsigned char)TC_FORMAT_MAX) {
+    ltfsmsg (LTFS_ERR, "20067E", format);
+    return -1;
+  }
 
-	/* For DAT drives, the partition will have been created during the Mode Select
-	 * because they don't support FORMAT MEDIUM.  Therefore return immediately. */
-	if (sio->family == drivefamily_dat) {
-		return 0;
-	}
+  /* For DAT drives, the partition will have been created during the Mode Select
+   * because they don't support FORMAT MEDIUM.  Therefore return immediately. */
+  if (sio->family == drivefamily_dat) {
+    return 0;
+  }
 
-	/* Set up the cdb: */
-	sio->cdb[0] = CMDformat;
-	sio->cdb[1] = 0;
-	sio->cdb[2] = (unsigned char)format;
-	sio->cdb[3] = 0;
-	sio->cdb[4] = 0;
-	sio->cdb[5] = 0;
+  /* 
+   * Before starting the format, check whether there is a pre-existing barcode;
+   *  if there is, and it looks like a truncated version of the string passed in
+   *  to us, then make a note of it so that we can write it back again afterwards!
+   * The check of the first six chars should cover the case where it has been
+   *  truncated by the software; intentionally different names need to be trusted.
+   * 
+   * HOWEVER - since this function is also called to unformat a volume (with NULL
+   *  passed in for the barcode_name), we'd better not attempt the string compare
+   *  if the provided barcode_name is null, since it might just cause a crash... 
+   * 
+   *  CR 11443.
+   */
+  if (ltotape_read_attribute (device, 0, TC_MAM_BARCODE, mam_buf, sizeof(mam_buf)) == 0) {
+    for (i = 0; i < TC_MAM_BARCODE_LEN; i++) {
+      currentBarcode[i] = mam_buf[5+i];
+    }
+    currentBarcode[TC_MAM_BARCODE_LEN] = '\0';
 
-	sio->cdb_length = 6;		/* six-byte cdb */
+    if (barcode_name == NULL) { 
+      /* no barcode provided by invoker so don't check it, won't be set anyway */
 
-	/* Set up the data part: */
-	sio->data = (unsigned char *) NULL;
-	sio->data_length = 0;
-	sio->data_direction = NO_TRANSFER;
+    } else if (strncmp (currentBarcode, barcode_name, 6) == 0) {
+      alreadyGotBarcode = 1;
+      ltfsmsg(LTFS_INFO, "20106I", currentBarcode);
 
-	/* Set the timeout then execute: */
-	sio->timeout_ms = LTO_FORMAT_TIMEOUT;
-	status = ltotape_scsiexec (sio);
+    } else {
+      ltfsmsg (LTFS_INFO, "20107I", currentBarcode, barcode_name);
+    }
+  }
 
-	/* If it failed, take a log snapshot: */
-	if (status == -1) {
-		ltfsmsg(LTFS_ERR, "20068E", status);
-		ltotape_log_snapshot (device, FALSE);
+  /* OK, now we're ready to set up the cdb: */
+  sio->cdb[0] = CMDformat;
+  sio->cdb[1] = 0;
+  sio->cdb[2] = (unsigned char)format;
+  sio->cdb[3] = 0;
+  sio->cdb[4] = 0;
+  sio->cdb[5] = 0;
 
-		/* But if it passed, set some CM attributes: */
-	} else {
-		ltotape_set_MAMattributes(device, format, vol_name, 0, barcode_name);
-	}
+  sio->cdb_length = 6;            /* six-byte cdb */
 
-	return status;
+  /* Set up the data part: */
+  sio->data = (unsigned char *)NULL;
+  sio->data_length = 0;
+  sio->data_direction = NO_TRANSFER;
+
+  /* Set the timeout then execute: */
+  sio->timeout_ms = LTO_FORMAT_TIMEOUT;
+  status = ltotape_scsiexec (sio);
+
+  /* If it failed, take a log snapshot: */
+  if (status == -1) {
+    ltfsmsg (LTFS_ERR, "20068E", status);
+    ltotape_log_snapshot (device, FALSE);
+
+  /* But if it passed, set some CM attributes: */
+  } else {
+    /*
+     * If there was a barcode when we started, use that:
+     */
+    if (alreadyGotBarcode) {
+      ltotape_set_MAMattributes (device, format, vol_name, TC_MAM_PAGE_ATTRIBUTE_ALL, (const char*)currentBarcode, UNLOCKED_MAM, vol_mam_uuid);
+
+    /* 
+     * Otherwise use whatever we were given:
+     */
+    } else {
+      ltotape_set_MAMattributes (device, format, vol_name, TC_MAM_PAGE_ATTRIBUTE_ALL, barcode_name, UNLOCKED_MAM, vol_mam_uuid);
+    }
+  }
+
+  return status;
 }
 
 /**------------------------------------------------------------------------**
@@ -1241,7 +1398,7 @@ int ltotape_format(void *device, TC_FORMAT_TYPE format, const char *vol_name, co
 int ltotape_logsense(void *device, const uint8_t page, unsigned char *buf, const size_t size)
 {
   ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
-  int          status;
+  int                   status;
 
   ltfsmsg(LTFS_DEBUG, "20061D", "logsense", page);
 
@@ -1259,7 +1416,7 @@ int ltotape_logsense(void *device, const uint8_t page, unsigned char *buf, const
   sio->cdb[8] = (unsigned char)  (size & 0xFF);
   sio->cdb[9] = 0;
 
-  sio->cdb_length = 10;		/* ten-byte cdb */
+  sio->cdb_length = 10;         /* ten-byte cdb */
 
 /*
  * Set up the data part:
@@ -1283,67 +1440,55 @@ int ltotape_logsense(void *device, const uint8_t page, unsigned char *buf, const
  * @param cap pointer to teh capasity data. This function will update capasity infomation.
  * @return 0 on success or a negative value on error
  */
-#define LOG_TAPECAPACITY         (0x31)
-
-enum {
-	TAPECAP_REMAIN_0 = 0x0001,	/* < Partition0 Remaining Capacity */
-	TAPECAP_REMAIN_1 = 0x0002,	/* < Partition1 Remaining Capacity */
-	TAPECAP_MAX_0 = 0x0003,		/* < Partition0 MAX Capacity */
-	TAPECAP_MAX_1 = 0x0004,		/* < Partition1 MAX Capacity */
-	TAPECAP_SIZE = 0x0005,
-};
-
-int ltotape_remaining_capacity(void *device, struct tc_remaining_cap *cap)
+int ltotape_remaining_capacity (void *device, struct tc_remaining_cap *cap)
 {
-    unsigned char logdata[1024];
-    unsigned char buf[16];
-    int           param_size;
-    int           i;
-    uint32_t      logcap;
-    int           status;
-    ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
+  unsigned char         logdata[LOGSENSEPAGE];
+  unsigned char         buf[16];
+  int                   param_size = 0;
+  int                   i = 0;
+  int                   status = 0;
+  uint32_t              logcap = 0;
+  ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
 
-    status = ltotape_logsense (device, LOG_TAPECAPACITY, logdata, 1024);
-    if (status < 0) {
-       ltfsmsg(LTFS_ERR, "20069E", LOG_TAPECAPACITY, status);
-       return status;
+  status = ltotape_logsense (device, LOG_PAGE_TAPE_CAPACITY, logdata, LOGSENSEPAGE);
+  if (status < 0) {
+    ltfsmsg (LTFS_ERR, "20069E", LOG_PAGE_TAPE_CAPACITY, status);
+    return status;
+  }
+
+  for (i = TAPECAP_REMAIN_0; i < TAPECAP_SIZE; i++) {
+    if ((parse_logPage (logdata, (uint16_t)i, &param_size, buf, 16) != 0) || (param_size != sizeof (uint32_t))) {
+      ltfsmsg (LTFS_ERR, "20070E");
+      return -ENOBUFS;
     }
 
-    for (i = TAPECAP_REMAIN_0; i < TAPECAP_SIZE; i++) {
-       if ((parse_logPage(logdata, (uint16_t) i, &param_size, buf, 16) != 0) || 
-           (param_size != sizeof(uint32_t))) {
-          ltfsmsg(LTFS_ERR, "20070E");
-	  return -ENOBUFS;
-       }
+    logcap = ((uint32_t)buf[0] << 24) + ((uint32_t)buf[1] << 16) + ((uint32_t)buf[2] << 8) + (uint32_t)buf[3];
 
-       logcap = ((uint32_t) buf[0] << 24) + ((uint32_t) buf[1] << 16) + 
-                ((uint32_t) buf[2] <<  8) +  (uint32_t) buf[3];
-
-/*
- * DAT drives return values in units of kB not MB, so need to scale them back:
- */
-       if (sio->family == drivefamily_dat) {
-          logcap /= 1024;
-       }
-
-       switch (i) {
-          case TAPECAP_REMAIN_0: cap->remaining_p0 = logcap; break;
-          case TAPECAP_REMAIN_1: cap->remaining_p1 = logcap; break;
-          case TAPECAP_MAX_0:    cap->max_p0 = logcap;       break;
-          case TAPECAP_MAX_1:    cap->max_p1 = logcap;       break;
-          default:
-             ltfsmsg(LTFS_ERR, "20071E", i);
-             return -EINVAL;
-             break;
-       }
+    /*
+     * DAT drives return values in units of kB not MB, so need to scale them back:
+     */
+    if (sio->family == drivefamily_dat) {
+      logcap /= 1024;
     }
 
-    ltfsmsg(LTFS_DEBUG, "20057D", "capacity part0", (unsigned long long)cap->remaining_p0,
-         (unsigned long long)cap->max_p0);
-    ltfsmsg(LTFS_DEBUG, "20057D", "capacity part1", (unsigned long long)cap->remaining_p1,
-         (unsigned long long)cap->max_p1);
+    if (i == TAPECAP_REMAIN_0) {
+      cap->remaining_p0 = logcap;
 
-    return 0;
+    } else if (i == TAPECAP_REMAIN_1) {
+      cap->remaining_p1 = logcap;
+
+    } else if (i == TAPECAP_MAX_0) {
+      cap->max_p0 = logcap;
+
+    } else {   // i == TAPECAP_MAX_1 - it's the only other option given our loop!
+      cap->max_p1 = logcap;
+    }
+  }
+
+  ltfsmsg (LTFS_DEBUG, "20057D", "capacity part0", (unsigned long long)cap->remaining_p0, (unsigned long long)cap->max_p0);
+  ltfsmsg (LTFS_DEBUG, "20057D", "capacity part1", (unsigned long long)cap->remaining_p1, (unsigned long long)cap->max_p1);
+
+  return 0;
 }
 
 /**------------------------------------------------------------------------**
@@ -1356,8 +1501,7 @@ int ltotape_remaining_capacity(void *device, struct tc_remaining_cap *cap)
  * @param size length of buf
  * @return 0 on success or a negative value on error
  */
-int ltotape_modesense(void *device, const uint8_t page, const TC_MP_PC_TYPE pc, 
-                      const uint8_t subpage, unsigned char *buf, const size_t size)
+int ltotape_modesense (void *device, const uint8_t page, const TC_MP_PC_TYPE pc, const uint8_t subpage, unsigned char *buf, const size_t size)
 {
   ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
   uint16_t     length;
@@ -1388,7 +1532,7 @@ int ltotape_modesense(void *device, const uint8_t page, const TC_MP_PC_TYPE pc,
   sio->cdb[8] = (unsigned char)(length & 0xFF);
   sio->cdb[9] = 0;
 
-  sio->cdb_length = 10;		/* ten-byte cdb */
+  sio->cdb_length = 10;         /* ten-byte cdb */
 
 /*
  * Set up the data part:
@@ -1421,8 +1565,8 @@ int ltotape_modesense(void *device, const uint8_t page, const TC_MP_PC_TYPE pc,
 int ltotape_modeselect(void *device, unsigned char *buf, const size_t size)
 {
   ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
-  int          status;
-  size_t       mysize;
+  int                   status;
+  size_t                mysize;
 
   if (size > MAX_UINT16) {
      ltfsmsg(LTFS_ERR, "20019E", size, "modeselect");
@@ -1456,7 +1600,7 @@ int ltotape_modeselect(void *device, unsigned char *buf, const size_t size)
   sio->cdb[8] = (unsigned char)(mysize & 0xFF);
   sio->cdb[9] = 0;
 
-  sio->cdb_length = 10;		/* ten-byte cdb */
+  sio->cdb_length = 10;         /* ten-byte cdb */
 
 /*
  * Set up the data part:
@@ -1472,15 +1616,15 @@ int ltotape_modeselect(void *device, unsigned char *buf, const size_t size)
   status = ltotape_scsiexec (sio);
 
   /* 01/3700 Mode select parameter is rounded by the drive (Should be ignored)*/
-  if ((sio->type == drive_lto7) && (status == -EDEV_MODE_PARAMETER_ROUNDED)) {
-	  status = 0;
+  if (((sio->type == drive_lto7)||(sio->type == drive_lto8)) && (status == -EDEV_MODE_PARAMETER_ROUNDED)) {
+          status = 0;
   }else if(status == -EDEV_MODE_PARAMETER_ROUNDED) {
-	  status = -1;
+          status = -1;
   }
 
   if (status == -1) {
      ltfsmsg(LTFS_ERR, "20073E", status);
-	 ltotape_log_snapshot (device, FALSE);
+         ltotape_log_snapshot (device, FALSE);
   }
 
   return status;
@@ -1506,7 +1650,7 @@ int ltotape_reserve_unit(void *device)
   sio->cdb[4] = 0;
   sio->cdb[5] = 0;
 
-  sio->cdb_length = 6;		/* six-byte cdb */
+  sio->cdb_length = 6;          /* six-byte cdb */
 
 /*
  * Set up the data part:
@@ -1544,7 +1688,7 @@ int ltotape_release_unit(void *device)
   sio->cdb[4] = 0;
   sio->cdb[5] = 0;
 
-  sio->cdb_length = 6;		/* six-byte cdb */
+  sio->cdb_length = 6;          /* six-byte cdb */
 
 /*
  * Set up the data part:
@@ -1582,7 +1726,7 @@ static int ltotape_prevent_allow_medium_removal(void *device, int prevent)
   sio->cdb[4] = (prevent)? 1:0;
   sio->cdb[5] = 0;
 
-  sio->cdb_length = 6;		/* six-byte cdb */
+  sio->cdb_length = 6;          /* six-byte cdb */
 
 /*
  * Set up the data part:
@@ -1632,13 +1776,12 @@ int ltotape_allow_medium_removal(void *device)
  * @param size length of the buffer
  * @return 0 on success or a negative value on error
  */
-int ltotape_read_attribute(void *device, const tape_partition_t part, const uint16_t id,
-                          unsigned char *buf, const size_t size)
+int ltotape_read_attribute (void *device, const tape_partition_t part, const uint16_t id, unsigned char *buf, const size_t size)
 {
   ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
-  int          length;
-  int          status;
-  unsigned char      *pRawData;
+  int                   length;
+  int                   status;
+  unsigned char        *pRawData;
 
   ltfsmsg(LTFS_DEBUG, "20057D", "readattr", (unsigned long long)part, (unsigned long long)id);
 
@@ -1680,7 +1823,7 @@ int ltotape_read_attribute(void *device, const tape_partition_t part, const uint
   sio->cdb[14] = 0;
   sio->cdb[15] = 0;
 
-  sio->cdb_length = 16;		/* sixteen-byte cdb */
+  sio->cdb_length = 16;         /* sixteen-byte cdb */
 
 /*
  * Set up the data part:
@@ -1719,29 +1862,32 @@ int ltotape_read_attribute(void *device, const tape_partition_t part, const uint
  * @param size length of the buffer
  * @return 0 on success or a negative value on error
  */
-int ltotape_write_attribute(void *device, const tape_partition_t part, 
-                           const unsigned char *buf, const size_t size)
+int ltotape_write_attribute (void *device, const tape_partition_t part, const unsigned char *buf, const size_t size)
 {
+  int                   length = 0;
+  int                   status = DEVICE_GOOD;
+  unsigned char        *pRawData = NULL;
   ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
-  int          length;
-  int          status;
-  unsigned char      *pRawData;
 
-  ltfsmsg(LTFS_DEBUG, "20059D", "writeattr", (unsigned long long)part);
+  ltfsmsg (LTFS_DEBUG, "20059D", "writeattr", (unsigned long long)part);
 
-/*
- * DAT drives will not support the required attributes (and some transports like USB
- *  don't allow 16-byte cdbs either) so no point in continuing..
- */
+  /*
+   * DAT drives will not support the required attributes (and some transports
+   * like USB don't allow 16-byte cdbs either) so no point in continuing.
+   */
   if (sio->family == drivefamily_dat) {
-     return -1;
+    return -1;
   }
 
   length = size + 4;
   pRawData = (unsigned char*) calloc (1, length);
   if (pRawData == NULL) {
-     ltfsmsg(LTFS_ERR, "10001E", "ltotape_write_attribute: data buffer");
+    ltfsmsg (LTFS_ERR, "10001E", "ltotape_write_attribute: data buffer");
+#ifdef HPE_mingw_BUILD
      return -ENOMEM;
+#else
+     return -EDEV_NO_MEMORY;
+#endif
   }
   
   *pRawData     = (unsigned char)(size >> 24);
@@ -1770,7 +1916,7 @@ int ltotape_write_attribute(void *device, const tape_partition_t part,
   sio->cdb[14] = 0;
   sio->cdb[15] = 0;
 
-  sio->cdb_length = 16;		/* sixteen-byte cdb */
+  sio->cdb_length = 16;         /* sixteen-byte cdb */
 
 /*
  * Set up the data part:
@@ -1804,12 +1950,53 @@ int ltotape_write_attribute(void *device, const tape_partition_t part,
  */
 int ltotape_allow_overwrite(void *device, const struct tc_position pos)
 {
-	int						rc = DEVICE_GOOD;
-	ltotape_scsi_io_type	*sio = (ltotape_scsi_io_type *) device;
+   ltotape_scsi_io_type *sio = (ltotape_scsi_io_type *) device;
+   int                   status;
 
-	CHECK_ARG_NULL(sio, -EDEV_INVALID_ARG);
+  ltfsmsg(LTFS_INFO, "17157I", "Setting allow_overwrite");
+   /*
+    * DAT drives will not support the required command so no point in continuing..
+    */
+    if (sio->family == drivefamily_dat) {
+        return -1;
+    }
 
-	return rc;
+   /*
+    * Set up the cdb:
+    */
+    sio->cdb[0] = CMDallow_overwrite;
+    sio->cdb[1] = 0; // Reserved
+    sio->cdb[2] = 1; // Allow overwrite at current position
+    sio->cdb[3] = pos.partition;
+    sio->cdb[4] = (pos.block & 0xFF00000000000000) >> 56;
+  	sio->cdb[5] = (pos.block & 0xFF000000000000) >> 48;
+  	sio->cdb[6] = (pos.block & 0xFF0000000000) >> 40;
+  	sio->cdb[7] = (pos.block & 0xFF00000000) >> 32;
+  	sio->cdb[8] = (pos.block & 0xFF000000) >> 24;
+  	sio->cdb[9] = (pos.block & 0xFF0000) >> 16;
+  	sio->cdb[10] = (pos.block & 0xFF00) >> 8;
+  	sio->cdb[11] = (pos.block & 0xFF);
+    sio->cdb[12] = 0; // Reserved
+    sio->cdb[13] = 0; // Reserved
+    sio->cdb[14] = 0; // Reserved
+    sio->cdb[15] = 0; // Control
+
+    sio->cdb_length = 16;               /* sixteen-byte cdb */
+
+    /* 
+     * Setup the data part:
+     */
+    sio->data = NULL;
+    sio->data_length = 0;
+    sio->data_direction = NO_TRANSFER;
+
+   /*
+    * Set the timeout then execute:
+    */
+    sio->timeout_ms = LTO_DEFAULT_TIMEOUT;
+    status = ltotape_scsiexec(sio);
+   
+    return status;
 }
 
 /**
@@ -1823,22 +2010,22 @@ int ltotape_allow_overwrite(void *device, const struct tc_position pos)
  */
 int ltotape_report_density(void *device, struct tc_density_report *rep, bool medium)
 {
+  unsigned char         density_buffer[64];
+  uint16_t              length = 0;
+  int                   status = DEVICE_GOOD;
   ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
-  unsigned char       densitybuffer [64];
-  uint16_t     length;
-  int          status;
 
-  length = sizeof(densitybuffer);
-
+  length = sizeof (density_buffer);
+  memset (sio->cdb, 0, sizeof (sio->cdb));
 /*
  * Set up the cdb:
  */
   sio->cdb[0] = CMDreport_density_support;
-	if (medium) {
-		sio->cdb[1] = 1;
-	} else {
-		sio->cdb[1] = 0;
-	}
+        if (medium) {
+    sio->cdb[1] = CURRENT_MEDIA_DENSITY;
+        } else {
+    sio->cdb[1] = ALL_MEDIA_DENSITY;
+        }
   sio->cdb[2] = 0;
   sio->cdb[3] = 0;
   sio->cdb[4] = 0;
@@ -1848,12 +2035,12 @@ int ltotape_report_density(void *device, struct tc_density_report *rep, bool med
   sio->cdb[8] = (unsigned char) (length & 0xFF);
   sio->cdb[9] = 0;
 
-  sio->cdb_length = 10;		/* ten-byte cdb */
+  sio->cdb_length = 10;         /* ten-byte cdb */
 
 /*
  * Set up the data part:
  */
-  sio->data = densitybuffer;
+  sio->data = density_buffer;
   sio->data_length = length;
   sio->data_direction = HOST_READ;
 
@@ -1865,8 +2052,9 @@ int ltotape_report_density(void *device, struct tc_density_report *rep, bool med
 
   if (status == 0) {
      rep->size = 1;
-     rep->density[0].primary   = densitybuffer[4];
-     rep->density[0].secondary = densitybuffer[5];
+    rep->density[0].primary = density_buffer[4];
+    rep->density[0].secondary = density_buffer[5];
+    status = DEVICE_GOOD;
 
   } else {
      rep->size = 0;
@@ -1885,7 +2073,7 @@ int ltotape_report_density(void *device, struct tc_density_report *rep, bool med
 int ltotape_set_compression(void *device, const bool enable_compression, struct tc_position *pos)
 {
   unsigned char modepage[32];
-  int		status;
+  int           status;
 
 /*
  * First, fetch the mode page from the drive (subpage code is 0)
@@ -1897,13 +2085,13 @@ int ltotape_set_compression(void *device, const bool enable_compression, struct 
  * If that worked, twiddle the bits and send it back:
  */
   if (status == 0) {
-    modepage[0] = 0;		/* set mode data length to 0 for mode select  */
-    modepage[1] = 0;		/*  (two-byte field for ModeSelect10)         */
+    modepage[0] = 0;            /* set mode data length to 0 for mode select  */
+    modepage[1] = 0;            /*  (two-byte field for ModeSelect10)         */
 
     if (enable_compression) {
-      modepage[18] |= 0x80;	/* Turn ON DCE bit			      */
+      modepage[18] |= 0x80;     /* Turn ON DCE bit                            */
     } else {
-      modepage[18] &= 0x7F;	/* Clear DCE bit			      */
+      modepage[18] &= 0x7F;     /* Clear DCE bit                              */
     }
 
     status = ltotape_modeselect (device, modepage, sizeof(modepage));
@@ -1920,7 +2108,7 @@ int ltotape_set_compression(void *device, const bool enable_compression, struct 
 int ltotape_set_default(void *device)
 {
   unsigned char modepage[16];
-  int		status;
+  int           status;
 
 /*
  * First, fetch the mode block descriptor from the drive; bomb out if that failed:
@@ -1931,8 +2119,8 @@ int ltotape_set_default(void *device)
  * If that worked, twiddle the bits and send it back:
  */
   if (status == 0) {
-    modepage[0]  = 0;		/* set mode data length to 0 for mode select  */
-    modepage[1]  = 0;		/*  (two-byte field for ModeSelect10)         */
+    modepage[0]  = 0;           /* set mode data length to 0 for mode select  */
+    modepage[1]  = 0;           /*  (two-byte field for ModeSelect10)         */
     modepage[13] = 0;           /* set fixed block size to 0 (three bytes)    */
     modepage[14] = 0;
     modepage[15] = 0;
@@ -1949,103 +2137,107 @@ int ltotape_set_default(void *device)
  * @param drive_param pointer to the drive parameter infomation. This function will update this value.
  * @return 0 on success or a negative value on error
  */
-int ltotape_get_parameters(void *device, struct tc_drive_param *drive_param)
+int ltotape_get_parameters (void *device, struct tc_drive_param *drive_param)
 {
   unsigned char modeheader[8];
   unsigned char blocklimits[6];
-  int		status;
-  unsigned char buf [64];
+  int           status;
+  unsigned char buf[64];
   int           mediatype;
-  const char*   pMediaName;
-  ltotape_scsi_io_type  *sio = (ltotape_scsi_io_type*)device;
+  ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
 
-/*
- * First, fetch the mode block descriptor from the drive to find the Write Protect state:
- */
-  status = ltotape_modesense (device, 0, TC_MP_PC_CURRENT, 0, modeheader, sizeof(modeheader));
+  /*
+   * First, fetch the mode block descriptor from the drive to find the Write Protect state:
+   */
+  status = ltotape_modesense (device, 0, TC_MP_PC_CURRENT, 0, modeheader, sizeof (modeheader));
 
   if (status < 0) {
-     return (status);
+    return (status);
   }
 
   drive_param->write_protect = ((modeheader[3] & 0x80) == 0x80) ? true : false;
   drive_param->logical_write_protect = 0;  /* n/a in this backend */
 
-/* Since LTO7 drive can not write data into LTO5RW media,
- * Set logical_write_protect to 1 if a LTO5RW tape inserted into the LTO7 drive
+/* 
+ * Since LTO7 and LTO8 drive can not write to LTO5RW media,
+ * Set logical_write_protect to 1 if an LTO5RW tape inserted into an LTO7 or LTO8 drive
+ * and logical_write_protect to 1 if an LTO6RW tape inserted into an LTO8 drive
+ *
+ * But note that this check is strictly only required for LTO5RW in LTO7; the other combos
+ *  should be rejected by the drive itself.
  */
-  if ((drive_param->write_protect == false) && (sio->type == drive_lto7)) {
-  	 status = ltotape_modesense(device, MODE_PAGE_MEDIUM_CONFIGURATION,
- 			TC_MP_PC_CURRENT, 0x00, buf, sizeof(buf));
-	 if (status == 0) {
-		/* media type comprises density code from the block descriptor + WORMM bit from mode data */
-		mediatype = (int) buf[8] + ((int) (buf[18] & 0x01) << 8);
-		switch (mediatype) {
-		case LTOMEDIATYPE_LTO5RW:
-			pMediaName = "LTO5RW";
-			drive_param->logical_write_protect = 1;
-			break;
-		default:
-			pMediaName = "Unknown";
-			break;
-		}
-	 }
+  if ((drive_param->write_protect == false) && ((sio->type == drive_lto7) || (sio->type == drive_lto8))) {
+    status = ltotape_modesense (device, MODE_PAGE_MEDIUM_CONFIGURATION, TC_MP_PC_CURRENT, 0x00, buf, sizeof (buf));
+    if (status == 0) {
+      /* media type comprises density code from the block descriptor + WORMM bit from mode data */
+      mediatype = (int)buf[8] + ((int)(buf[18] & 0x01) << 8);
+      switch (mediatype) {
+      case LTOMEDIATYPE_LTO6RW:
+        if (sio->type == drive_lto8) {
+          drive_param->logical_write_protect = 1;
+        }
+        break;
+      case LTOMEDIATYPE_LTO5RW:
+        drive_param->logical_write_protect = 1;
+        break;
+      default:
+        break;
+      }
+    }
   }
-/*
- * Then issue Read Block Limits to determine max block size - unless it's a DAT
- *  drive, in which case we'll limit it to 64kB to avoid transport issues..
- */
+  /*
+   * Then issue Read Block Limits to determine max block size - unless it's a DAT
+   *  drive, in which case we'll limit it to 64kB to avoid transport issues..
+   */
 
   if (sio->family == drivefamily_dat) {
-     drive_param->max_blksize = 65536;
-  
-  } else {
-/*
- * Set up the cdb:
- */
-     sio->cdb[0] = CMDread_block_limits;
-     sio->cdb[1] = 0;
-     sio->cdb[2] = 0;
-     sio->cdb[3] = 0;
-     sio->cdb[4] = 0;
-     sio->cdb[5] = 0;
+    drive_param->max_blksize = 65536;
 
-     sio->cdb_length = 6;		/* six-byte cdb */
+  } else {
+    /*
+     * Set up the cdb:
+     */
+    sio->cdb[0] = CMDread_block_limits;
+    sio->cdb[1] = 0;
+    sio->cdb[2] = 0;
+    sio->cdb[3] = 0;
+    sio->cdb[4] = 0;
+    sio->cdb[5] = 0;
+
+    sio->cdb_length = 6;               /* six-byte cdb */
 
 /*
  * Set up the data part:
  */
-     sio->data = blocklimits;
-     sio->data_length = sizeof(blocklimits);
-     sio->data_direction = HOST_READ;
+    sio->data = blocklimits;
+    sio->data_length = sizeof (blocklimits);
+    sio->data_direction = HOST_READ;
 
-/*
- * Set the timeout then execute:
- */
-     sio->timeout_ms = (sio->family == drivefamily_lto) ? LTO_READBLOCKLIMITS_TIMEOUT : DAT_READBLOCKLIMITS_TIMEOUT;
-     status = ltotape_scsiexec (sio);
+    /*
+     * Set the timeout then execute:
+     */
+    sio->timeout_ms = (sio->family == drivefamily_lto) ? LTO_READBLOCKLIMITS_TIMEOUT : DAT_READBLOCKLIMITS_TIMEOUT;
+    status = ltotape_scsiexec (sio);
 
-     if (status == 0) {
-        drive_param->max_blksize = ((uint)blocklimits[1] << 16) + 
-                                   ((uint)blocklimits[2] <<  8) +
-                                    (uint)blocklimits[3];
-/*
- * Normally we'll limit the "max blocksize" to the preferred size; however
- *  the user can pass the fuse option "-o nosizelimit" in which case we'll
- *  go up to the maximum practical size (which is called unlimited but isn't
- *  really because the OS will limit it, so we use our best guess of the OS
- *  limit value):
- */
-        if (sio->unlimited_blocksize == 0) {
-	   if (drive_param->max_blksize > LTOTAPE_MAX_TRANSFER_SIZE) {
-	     drive_param->max_blksize = LTOTAPE_MAX_TRANSFER_SIZE;
-	   }
-	} else {
-	   if (drive_param->max_blksize > LTOTAPE_OS_LIMITED_SIZE) {
-	     drive_param->max_blksize = LTOTAPE_OS_LIMITED_SIZE;
-	   }
-	}
-     }
+    if (status == 0) {
+      drive_param->max_blksize = ((uint)blocklimits[1] << 16) + ((uint)blocklimits[2] << 8) + (uint)blocklimits[3];
+      /*
+       * Normally we'll limit the "max blocksize" to the preferred size; however
+       *  the user can pass the fuse option "-o nosizelimit" in which case we'll
+       *  go up to the maximum practical size (which is called unlimited but isn't
+       *  really because the OS will limit it, so we use our best guess of the OS
+       *  limit value):
+       */
+      if (sio->unlimited_blocksize == 0) {
+        if (drive_param->max_blksize > LTOTAPE_MAX_TRANSFER_SIZE) {
+          drive_param->max_blksize = LTOTAPE_MAX_TRANSFER_SIZE;
+        }
+      } else {
+        if (drive_param->max_blksize > LTOTAPE_OS_LIMITED_SIZE) {
+          drive_param->max_blksize = LTOTAPE_OS_LIMITED_SIZE;
+        }
+      }
+    }
   }
 
   return (status);
@@ -2060,9 +2252,9 @@ int ltotape_get_parameters(void *device, struct tc_drive_param *drive_param)
  * @return on success, available device count on this system or a negative
  * value on error.
  */
-int ltotape_get_device_list(struct tc_drive_info *buf, int count)
+int ltotape_get_device_list (struct tc_drive_info *buf, int count)
 {
-	return 0;
+  return 0;
 }
 
 /**------------------------------------------------------------------------**
@@ -2072,528 +2264,619 @@ int ltotape_get_device_list(struct tc_drive_info *buf, int count)
  * @param format the type of format being done, so we can clear on 'unformat'
  * @return 0 if set ok, negative value on error
  */
-static int ltotape_set_MAMattributes (void* device, TC_FORMAT_TYPE format,
-		const char *vol_name, unsigned int attribute_id, const char *barcode_name)
+static int ltotape_set_MAMattributes (void* device, TC_FORMAT_TYPE format, const char *vol_name, unsigned int attribute_id,
+                                      const char *barcode_name, mam_lockval lockbit, const char *vol_mam_uuid)
 {
-	unsigned char	*buf = NULL;
-	char			*volume_name = NULL, *barcode = NULL;
-	int				status = 0, len = 0, srclen = 0, ret = 0;
+        unsigned char   *buf = NULL;
+        char                    *volume_name = NULL, *barcode = NULL, *volume_mam_uuid = NULL;
+        int                             status = 0, len = 0, srclen = 0, ret = 0;
 
-	switch (attribute_id) {
-	case LTOATTRIBID_APPLICATION_VENDOR:
-		/* Set Application Vendor: */
-		buf = (unsigned char *) calloc(1, 40);
-		memset(buf, (int) 0x20, 40);
-		buf[0] = (unsigned char) (LTOATTRIBID_APPLICATION_VENDOR >> 8);
-		buf[1] = (unsigned char) (LTOATTRIBID_APPLICATION_VENDOR & 0xFF);
-		buf[2] = 1; /* format = ascii (01b) */
-		buf[3] = 0; /* attrib len is two bytes but only need one */
+        switch (attribute_id) {
+        case LTOATTRIBID_APPLICATION_VENDOR:
+                /* Set Application Vendor: */
+                buf = (unsigned char *) calloc(1, 40);
+                memset(buf, (int) 0x20, 40);
+                buf[0] = (unsigned char) (LTOATTRIBID_APPLICATION_VENDOR >> 8);
+                buf[1] = (unsigned char) (LTOATTRIBID_APPLICATION_VENDOR & 0xFF);
+                buf[2] = 1; /* format = ascii (01b) */
+                buf[3] = 0; /* attrib len is two bytes but only need one */
 
-		if (format == TC_FORMAT_DEFAULT) {
-			buf[4] = 0; /* set length to zero to delete the attribute */
-			len = ATTRIB_HEADER_LEN;
+                if (format == TC_FORMAT_DEFAULT) {
+                        buf[4] = 0; /* set length to zero to delete the attribute */
+                        len = ATTRIB_HEADER_LEN;
 
-		} else {
-			buf[4] = LTOATTRIB_APPLICATION_VENDOR_LEN;
-#ifdef HP_BUILD
-			buf[5] = (unsigned char) 'H';
-			buf[6] = (unsigned char) 'P';
+                } else {
+                        buf[4] = LTOATTRIB_APPLICATION_VENDOR_LEN;
+#ifdef HPE_BUILD
+                        buf[5] = (unsigned char) 'H';
+                        buf[6] = (unsigned char) 'P';
+                        buf[7] = (unsigned char) 'E';
 #elif defined QUANTUM_BUILD
-			buf[5] = (unsigned char) 'Q';
-			buf[6] = (unsigned char) 'U';
-			buf[7] = (unsigned char) 'A';
-			buf[8] = (unsigned char) 'N';
-			buf[9] = (unsigned char) 'T';
-			buf[10] = (unsigned char) 'U';
-			buf[11] = (unsigned char) 'M';
+                        buf[5] = (unsigned char) 'Q';
+                        buf[6] = (unsigned char) 'U';
+                        buf[7] = (unsigned char) 'A';
+                        buf[8] = (unsigned char) 'N';
+                        buf[9] = (unsigned char) 'T';
+                        buf[10] = (unsigned char) 'U';
+                        buf[11] = (unsigned char) 'M';
 #elif defined GENERIC_OEM_BUILD
-			buf[5] = (unsigned char) 'L';
-			buf[6] = (unsigned char) 'T';
-			buf[7] = (unsigned char) 'F';
-			buf[8] = (unsigned char) 'S';
+                        buf[5] = (unsigned char) 'L';
+                        buf[6] = (unsigned char) 'T';
+                        buf[7] = (unsigned char) 'F';
+                        buf[8] = (unsigned char) 'S';
 #else
 # error "No Application Vendor defined!"
 #endif
-			len = LTOATTRIB_APPLICATION_VENDOR_LEN + ATTRIB_HEADER_LEN;
-		}
-		status = ltotape_write_attribute(device, (const tape_partition_t) 0,
-				buf, len);
+                        len = LTOATTRIB_APPLICATION_VENDOR_LEN + ATTRIB_HEADER_LEN;
+                }
+                status = ltotape_write_attribute (device, (const tape_partition_t)0, buf, len);
 
-		/* Cleanup. */
-		if (buf) {
-			free(buf);
-			buf = NULL;
-		}
-		if (status < 0) {
-			ltfsmsg(LTFS_WARN, "20024W",
-					LTOATTRIBID_APPLICATION_VENDOR, status);
-			ret = status;
-		}
+                /* Cleanup. */
+                if (buf) {
+                        free(buf);
+                        buf = NULL;
+                }
+                if (status < 0) {
+                        ltfsmsg(LTFS_WARN, "20024W",
+                                        LTOATTRIBID_APPLICATION_VENDOR, status);
+                        ret = status;
+                }
 
-		break;
-	case LTOATTRIBID_APPLICATION_NAME:
-		/* Set Application Name: */
-		buf = (unsigned char *) calloc(1, 40);
-		memset(buf, (int) 0x20, 40);
-		buf[0] = (unsigned char) (LTOATTRIBID_APPLICATION_NAME >> 8);
-		buf[1] = (unsigned char) (LTOATTRIBID_APPLICATION_NAME & 0xFF);
-		buf[2] = 1; /* format = ascii (01b) */
-		buf[3] = 0; /* attrib len is two bytes but only need one */
+                break;
+        case LTOATTRIBID_APPLICATION_NAME:
+                /* Set Application Name: */
+                buf = (unsigned char *) calloc(1, 40);
+                memset(buf, (int) 0x20, 40);
+                buf[0] = (unsigned char) (LTOATTRIBID_APPLICATION_NAME >> 8);
+                buf[1] = (unsigned char) (LTOATTRIBID_APPLICATION_NAME & 0xFF);
+                buf[2] = 1; /* format = ascii (01b) */
+                buf[3] = 0; /* attrib len is two bytes but only need one */
 
-		if (format == TC_FORMAT_DEFAULT) {
-			buf[4] = 0; /* set length to zero to delete the attribute */
-			len = ATTRIB_HEADER_LEN;
+                if (format == TC_FORMAT_DEFAULT) {
+                        buf[4] = 0; /* set length to zero to delete the attribute */
+                        len = ATTRIB_HEADER_LEN;
 
-		} else {
-			buf[4] = LTOATTRIB_APPLICATION_NAME_LEN;
-			srclen = strlen(PACKAGE_NAME);
-			len = (srclen > LTOATTRIB_APPLICATION_NAME_LEN) ?
-					LTOATTRIB_APPLICATION_NAME_LEN : srclen;
-			memcpy((void*) buf + 5, (const void*) PACKAGE_NAME, len);
-			len = LTOATTRIB_APPLICATION_NAME_LEN + ATTRIB_HEADER_LEN;
-		}
+                } else {
+                        buf[4] = LTOATTRIB_APPLICATION_NAME_LEN;
+                        srclen = strlen(PACKAGE_NAME);
+                        len = (srclen > LTOATTRIB_APPLICATION_NAME_LEN) ? LTOATTRIB_APPLICATION_NAME_LEN : srclen;
+                        memcpy((void*) buf + 5, (const void*) PACKAGE_NAME, len);
+                        len = LTOATTRIB_APPLICATION_NAME_LEN + ATTRIB_HEADER_LEN;
+                }
 
-		status = ltotape_write_attribute(device, (const tape_partition_t) 0,
-				buf, len);
+                status = ltotape_write_attribute (device, (const tape_partition_t)0, buf, len);
 
-		/* Cleanup. */
-		if (buf) {
-			free(buf);
-			buf = NULL;
-		}
-		if (status < 0) {
-			ltfsmsg(LTFS_WARN, "20024W", LTOATTRIBID_APPLICATION_NAME, status);
-			ret = status;
-		}
+                /* Cleanup. */
+                if (buf) {
+                        free(buf);
+                        buf = NULL;
+                }
+                if (status < 0) {
+                        ltfsmsg(LTFS_WARN, "20024W", LTOATTRIBID_APPLICATION_NAME, status);
+                        ret = status;
+                }
 
-		break;
-	case LTOATTRIBID_APPLICATION_VERSION:
-		/* Set Application Version: */
-		buf = (unsigned char *) calloc(1, 40);
-		memset(buf, (int) 0x20, 40);
-		buf[0] = (unsigned char) (LTOATTRIBID_APPLICATION_VERSION >> 8);
-		buf[1] = (unsigned char) (LTOATTRIBID_APPLICATION_VERSION & 0xFF);
-		buf[2] = 1; /* format = ascii (01b) */
-		buf[3] = 0; /* attrib len is two bytes but only need one */
+                break;
+        case LTOATTRIBID_APPLICATION_VERSION:
+                /* Set Application Version: */
+                buf = (unsigned char *) calloc(1, 40);
+                memset(buf, (int) 0x20, 40);
+                buf[0] = (unsigned char) (LTOATTRIBID_APPLICATION_VERSION >> 8);
+                buf[1] = (unsigned char) (LTOATTRIBID_APPLICATION_VERSION & 0xFF);
+                buf[2] = 1; /* format = ascii (01b) */
+                buf[3] = 0; /* attrib len is two bytes but only need one */
 
-		if (format == TC_FORMAT_DEFAULT) {
-			buf[4] = 0; /* set length to zero to delete the attribute */
-			len = ATTRIB_HEADER_LEN;
+                if (format == TC_FORMAT_DEFAULT) {
+                        buf[4] = 0; /* set length to zero to delete the attribute */
+                        len = ATTRIB_HEADER_LEN;
 
-		} else {
-			buf[4] = LTOATTRIB_APPLICATION_VERSION_LEN;
-			srclen = strlen(PACKAGE_VERSION);
-			len = (srclen > LTOATTRIB_APPLICATION_VERSION_LEN) ?
-					LTOATTRIB_APPLICATION_VERSION_LEN : srclen;
-			strncpy((char*) buf + 5, PACKAGE_VERSION, len);
-			len = LTOATTRIB_APPLICATION_VERSION_LEN + ATTRIB_HEADER_LEN;
-		}
+                } else {
+                        buf[4] = LTOATTRIB_APPLICATION_VERSION_LEN;
+                        srclen = strlen(PACKAGE_VERSION);
+                        len = (srclen > LTOATTRIB_APPLICATION_VERSION_LEN) ? LTOATTRIB_APPLICATION_VERSION_LEN : srclen;
+                        strncpy((char*) buf + 5, PACKAGE_VERSION, len);
+                        len = LTOATTRIB_APPLICATION_VERSION_LEN + ATTRIB_HEADER_LEN;
+                }
 
-		status = ltotape_write_attribute(device, (const tape_partition_t) 0,
-				buf, len);
+                status = ltotape_write_attribute(device, (const tape_partition_t) 0, buf, len);
 
-		/* Cleanup. */
-		if (buf) {
-			free(buf);
-			buf = NULL;
-		}
-		if (status < 0) {
-			ltfsmsg(LTFS_WARN, "20024W",
-					LTOATTRIBID_APPLICATION_VERSION, status);
-			ret = status;
-		}
+                /* Cleanup. */
+                if (buf) {
+                        free(buf);
+                        buf = NULL;
+                }
+                if (status < 0) {
+                        ltfsmsg(LTFS_WARN, "20024W", LTOATTRIBID_APPLICATION_VERSION, status);
+                        ret = status;
+                }
 
-		break;
-	case LTOATTRIBID_APP_FORMAT_VERSION:
-		/* Set Application Format Version (to the value used in the format label, not the index -
-		 * though they should be the same at format time): */
-		buf = (unsigned char *) calloc(1, 40);
-		memset(buf, (int) 0x20, 40);
-		buf[0] = (unsigned char) (LTOATTRIBID_APP_FORMAT_VERSION >> 8);
-		buf[1] = (unsigned char) (LTOATTRIBID_APP_FORMAT_VERSION & 0xFF);
-		buf[2] = 1; /* format = ascii (01b) */
-		buf[3] = 0; /* attrib len is two bytes but only need one */
+                break;
+        case LTOATTRIBID_APP_FORMAT_VERSION:
+                /* Set Application Format Version (to the value used in the format label, not the index -
+                 * though they should be the same at format time): */
+                buf = (unsigned char *) calloc(1, 40);
+                memset(buf, (int) 0x20, 40);
+                buf[0] = (unsigned char) (LTOATTRIBID_APP_FORMAT_VERSION >> 8);
+                buf[1] = (unsigned char) (LTOATTRIBID_APP_FORMAT_VERSION & 0xFF);
+                buf[2] = 1; /* format = ascii (01b) */
+                buf[3] = 0; /* attrib len is two bytes but only need one */
 
-		if (format == TC_FORMAT_DEFAULT) {
-			buf[4] = 0; /* set length to zero to delete the attribute */
-			len = ATTRIB_HEADER_LEN;
-		} else {
-			buf[4] = LTOATTRIB_APP_FORMAT_VERSION_LEN;
-			srclen = strlen(LTFS_LABEL_VERSION_STR);
-			len = (srclen > LTOATTRIB_APP_FORMAT_VERSION_LEN) ?
-					LTOATTRIB_APP_FORMAT_VERSION_LEN : srclen;
-			strncpy((char*) buf + 5, LTFS_LABEL_VERSION_STR, len);
-			len = LTOATTRIB_APP_FORMAT_VERSION_LEN + ATTRIB_HEADER_LEN;
-		}
+                if (format == TC_FORMAT_DEFAULT) {
+                        buf[4] = 0; /* set length to zero to delete the attribute */
+                        len = ATTRIB_HEADER_LEN;
+                } else {
+                        buf[4] = LTOATTRIB_APP_FORMAT_VERSION_LEN;
+                        srclen = strlen(LTFS_LABEL_VERSION_STR);
+                        len = (srclen > LTOATTRIB_APP_FORMAT_VERSION_LEN) ? LTOATTRIB_APP_FORMAT_VERSION_LEN : srclen;
+                        strncpy((char*) buf + 5, LTFS_LABEL_VERSION_STR, len);
+                        len = LTOATTRIB_APP_FORMAT_VERSION_LEN + ATTRIB_HEADER_LEN;
+                }
 
-		status = ltotape_write_attribute(device, (const tape_partition_t) 0,
-				buf, len);
+                status = ltotape_write_attribute(device, (const tape_partition_t) 0, buf, len);
 
-		/* Cleanup. */
-		if (buf) {
-			free(buf);
-			buf = NULL;
-		}
-		if (status < 0) {
-			ltfsmsg(LTFS_WARN, "20024W",
-					LTOATTRIBID_APP_FORMAT_VERSION, status);
-			ret = status;
-		}
+                /* Cleanup. */
+                if (buf) {
+                        free(buf);
+                        buf = NULL;
+                }
+                if (status < 0) {
+                        ltfsmsg(LTFS_WARN, "20024W",
+                                        LTOATTRIBID_APP_FORMAT_VERSION, status);
+                        ret = status;
+                }
 
-		break;
-	case LTOATTRIBID_USR_MED_TXT_LABEL:
-		/* Set User Medium Text label */
-		volume_name = (char *) calloc(1, LTOATTRIBID_USR_MED_TXT_LABEL_LEN);
+                break;
+        case LTOATTRIBID_USR_MED_TXT_LABEL:
+                /* Set User Medium Text label */
+                volume_name = (char *) calloc(1, LTOATTRIBID_USR_MED_TXT_LABEL_LEN);
 
-		if (vol_name && strlen(vol_name)) {
-			if (strlen(vol_name) > (LTOATTRIBID_USR_MED_TXT_LABEL_LEN - 1)) {
-				strncpy(volume_name, vol_name,
-						(LTOATTRIBID_USR_MED_TXT_LABEL_LEN - 1));
-			} else {
-				strncpy(volume_name, vol_name, strlen(vol_name));
-			}
-		}
+                if (vol_name && strlen(vol_name)) {
+                        if (strlen(vol_name) > (LTOATTRIBID_USR_MED_TXT_LABEL_LEN - 1)) {
+                                strncpy (volume_name, vol_name, (LTOATTRIBID_USR_MED_TXT_LABEL_LEN - 1));
+                        } else {
+                                strncpy(volume_name, vol_name, strlen(vol_name));
+                        }
+                }
 
-		buf = (unsigned char *) calloc(1,
-				(LTOATTRIBID_USR_MED_TXT_LABEL_LEN + ATTRIB_HEADER_LEN));
-		buf[0] = (unsigned char) (LTOATTRIBID_USR_MED_TXT_LABEL >> 8);
-		buf[1] = (unsigned char) (LTOATTRIBID_USR_MED_TXT_LABEL & 0xFF);
-		buf[2] = 2; /* format = text (10b) */
-		buf[3] = 0; /* attrib len is two bytes but only need one */
+                buf = (unsigned char *) calloc(1, (LTOATTRIBID_USR_MED_TXT_LABEL_LEN + ATTRIB_HEADER_LEN));
+                buf[0] = (unsigned char) (LTOATTRIBID_USR_MED_TXT_LABEL >> 8);
+                buf[1] = (unsigned char) (LTOATTRIBID_USR_MED_TXT_LABEL & 0xFF);
+                buf[2] = 2; /* format = text (10b) */
+                buf[3] = 0; /* attrib len is two bytes but only need one */
 
-		if (format == TC_FORMAT_DEFAULT) {
-			buf[4] = 0; /* set length to zero to delete the attribute */
-			len = ATTRIB_HEADER_LEN;
-		} else {
-			buf[4] = LTOATTRIBID_USR_MED_TXT_LABEL_LEN;
-			srclen = strlen(volume_name);
-			len = (srclen > LTOATTRIBID_USR_MED_TXT_LABEL_LEN) ?
-					LTOATTRIBID_USR_MED_TXT_LABEL_LEN : srclen;
-			strncpy((char*) buf + 5, volume_name, len);
-			len = LTOATTRIBID_USR_MED_TXT_LABEL_LEN + ATTRIB_HEADER_LEN;
-		}
+                if (format == TC_FORMAT_DEFAULT) {
+                        buf[4] = 0; /* set length to zero to delete the attribute */
+                        len = ATTRIB_HEADER_LEN;
+                } else {
+                        buf[4] = LTOATTRIBID_USR_MED_TXT_LABEL_LEN;
+                        srclen = strlen(volume_name);
+                        len = (srclen > LTOATTRIBID_USR_MED_TXT_LABEL_LEN) ? LTOATTRIBID_USR_MED_TXT_LABEL_LEN : srclen;
+                        strncpy((char*) buf + 5, volume_name, len);
+                        len = LTOATTRIBID_USR_MED_TXT_LABEL_LEN + ATTRIB_HEADER_LEN;
+                }
 
-		status = ltotape_write_attribute(device, (const tape_partition_t) 0,
-				buf, len);
+                status = ltotape_write_attribute(device, (const tape_partition_t) 0, buf, len);
 
-		/* Cleanup. */
-		if (buf) {
-			free(buf);
-			buf = NULL;
-		}
+                /* Cleanup. */
+                if (buf) {
+                        free(buf);
+                        buf = NULL;
+                }
 
-		if (volume_name) {
-			free(volume_name);
-			volume_name = NULL;
-		}
+                if (volume_name) {
+                        free(volume_name);
+                        volume_name = NULL;
+                }
 
-		if (status < 0) {
-			ltfsmsg(LTFS_WARN, "20024W",
-					LTOATTRIBID_USR_MED_TXT_LABEL, status);
-			ret = status;
-		}
-		break;
-	case LTOATTRIBID_BARCODE:
-		/* Set Barcode */
-		if (barcode_name && strlen(barcode_name)) {
-			barcode = (char *) calloc(1, LTOATTRIBID_BARCODE_LEN);
+                if (status < 0) {
+                        ltfsmsg(LTFS_WARN, "20024W", LTOATTRIBID_USR_MED_TXT_LABEL, status);
+                        ret = status;
+                }
+                break;
+        case LTOATTRIBID_BARCODE:
+                /* Set Barcode */
+                if (barcode_name && strlen(barcode_name)) {
+                        barcode = (char *) calloc(1, LTOATTRIBID_BARCODE_LEN);
 
-			if (strlen(barcode_name) > (LTOATTRIBID_BARCODE_LEN)) {
-				strncpy(barcode, barcode_name,
-						(LTOATTRIBID_BARCODE_LEN));
-			} else {
-				strncpy(barcode, barcode_name, strlen(barcode_name));
-			}
+                        if (strlen(barcode_name) > (LTOATTRIBID_BARCODE_LEN)) {
+                                strncpy(barcode, barcode_name, (LTOATTRIBID_BARCODE_LEN));
+                        } else {
+                                strncpy(barcode, barcode_name, strlen(barcode_name));
+                        }
 
-			buf = (unsigned char *) calloc(1,
-					(LTOATTRIBID_BARCODE_LEN + ATTRIB_HEADER_LEN));
-			memset(buf, (int) 0x20, (LTOATTRIBID_BARCODE_LEN + ATTRIB_HEADER_LEN));
-			buf[0] = (unsigned char) (LTOATTRIBID_BARCODE >> 8);
-			buf[1] = (unsigned char) (LTOATTRIBID_BARCODE & 0xFF);
-			buf[2] = 1; /* format = ascii (01b) */
-			buf[3] = 0; /* attrib len is two bytes but only need one */
+                        buf = (unsigned char *) calloc(1, (LTOATTRIBID_BARCODE_LEN + ATTRIB_HEADER_LEN));
+                        memset(buf, (int) 0x20, (LTOATTRIBID_BARCODE_LEN + ATTRIB_HEADER_LEN));
+                        buf[0] = (unsigned char) (LTOATTRIBID_BARCODE >> 8);
+                        buf[1] = (unsigned char) (LTOATTRIBID_BARCODE & 0xFF);
+                        buf[2] = 1; /* format = ascii (01b) */
+                        buf[3] = 0; /* attrib len is two bytes but only need one */
 
-			/* Delete barcode attribute if 6 blank spaces are recieved for barcode_name param */
-			if (format == TC_FORMAT_DEFAULT || !strcmp(barcode_name, "      ")) {
-				buf[4] = 0; /* set length to zero to delete the attribute */
-				len = ATTRIB_HEADER_LEN;
-			} else {
-				buf[4] = LTOATTRIBID_BARCODE_LEN;
-				srclen = strlen(barcode);
-				len = (srclen > LTOATTRIBID_BARCODE_LEN) ?
-						LTOATTRIBID_BARCODE_LEN : srclen;
-				strncpy((char*) buf + 5, barcode, len);
-				len = LTOATTRIBID_BARCODE_LEN + ATTRIB_HEADER_LEN;
-			}
+                        /* Delete barcode attribute if 6 blank spaces are recieved for barcode_name param */
+                        if (format == TC_FORMAT_DEFAULT || !strcmp(barcode_name, "      ")) {
+                                buf[4] = 0; /* set length to zero to delete the attribute */
+                                len = ATTRIB_HEADER_LEN;
+                        } else {
+                                buf[4] = LTOATTRIBID_BARCODE_LEN;
+                                srclen = strlen(barcode);
+                                len = (srclen > LTOATTRIBID_BARCODE_LEN) ? LTOATTRIBID_BARCODE_LEN : srclen;
+                                strncpy((char*) buf + 5, barcode, len);
+                                len = LTOATTRIBID_BARCODE_LEN + ATTRIB_HEADER_LEN;
+                        }
 
-			status = ltotape_write_attribute(device, (const tape_partition_t) 0,
-					buf, len);
+                        status = ltotape_write_attribute(device, (const tape_partition_t) 0, buf, len);
 
-			/* Cleanup. */
-			if (buf) {
-				free(buf);
-				buf = NULL;
-			}
-			if (status < 0) {
-				ltfsmsg(LTFS_WARN, "20024W",
-						LTOATTRIBID_BARCODE, status);
-				ret = status;
-			}
-		}
-		break;
-	default:
-		/* Set Application Vendor: */
-		buf = (unsigned char *) calloc(1, 40);
-		memset(buf, (int) 0x20, 40);
-		buf[0] = (unsigned char) (LTOATTRIBID_APPLICATION_VENDOR >> 8);
-		buf[1] = (unsigned char) (LTOATTRIBID_APPLICATION_VENDOR & 0xFF);
-		buf[2] = 1; /* format = ascii (01b) */
-		buf[3] = 0; /* attrib len is two bytes but only need one */
+                        /* Cleanup. */
+                        if (buf) {
+                                free(buf);
+                                buf = NULL;
+                        }
 
-		if (format == TC_FORMAT_DEFAULT) {
-			buf[4] = 0; /* set length to zero to delete the attribute */
-			len = ATTRIB_HEADER_LEN;
+                        if (barcode) {
+                          free (barcode);
+                          barcode = NULL;
+                        }
 
-		} else {
-			buf[4] = LTOATTRIB_APPLICATION_VENDOR_LEN;
-#ifdef HP_BUILD
-			buf[5] = (unsigned char) 'H';
-			buf[6] = (unsigned char) 'P';
+                        if (status < 0) {
+                                ltfsmsg(LTFS_WARN, "20024W", LTOATTRIBID_BARCODE, status);
+                                ret = status;
+                        }
+                }
+                break;
+        case LTOATTRIBID_VOL_LOCK_STATE:
+                /* Set Volume Lock State: */
+                buf = (unsigned char *) calloc(1, LTOATTRIBID_VOL_LOCK_STATE_LEN + ATTRIB_HEADER_LEN);
+                memset(buf, (int) 0x20, LTOATTRIBID_VOL_LOCK_STATE_LEN + ATTRIB_HEADER_LEN);
+                buf[0] = (unsigned char) (LTOATTRIBID_VOL_LOCK_STATE >> 8);
+                buf[1] = (unsigned char) (LTOATTRIBID_VOL_LOCK_STATE & 0xFF);
+                buf[2] = 0; /* format = binary */
+                buf[3] = 0; /* attrib len is two bytes but only need one */
+
+                if (format == TC_FORMAT_DEFAULT) {
+                        buf[4] = 0; /* set length to zero to delete the attribute */
+                        len = ATTRIB_HEADER_LEN;
+
+                } else {
+                        buf[4] = LTOATTRIBID_VOL_LOCK_STATE_LEN;
+                        buf[5] = (unsigned char) lockbit;
+                        len = LTOATTRIBID_VOL_LOCK_STATE_LEN + ATTRIB_HEADER_LEN;
+                }
+
+                status = ltotape_write_attribute(device, (const tape_partition_t) 0, buf, len);
+
+                /* Cleanup. */
+                if (buf) {
+                        free(buf);
+                        buf = NULL;
+                }
+
+                if (status < 0) {
+                        ltfsmsg(LTFS_WARN, "20024W", LTOATTRIBID_VOL_LOCK_STATE, status);
+                        ret = status;
+                }
+
+                break;
+        default:
+                /* Set Application Vendor: */
+                buf = (unsigned char *) calloc(1, 40);
+                memset(buf, (int) 0x20, 40);
+                buf[0] = (unsigned char) (LTOATTRIBID_APPLICATION_VENDOR >> 8);
+                buf[1] = (unsigned char) (LTOATTRIBID_APPLICATION_VENDOR & 0xFF);
+                buf[2] = 1; /* format = ascii (01b) */
+                buf[3] = 0; /* attrib len is two bytes but only need one */
+
+                if (format == TC_FORMAT_DEFAULT) {
+                        buf[4] = 0; /* set length to zero to delete the attribute */
+                        len = ATTRIB_HEADER_LEN;
+
+                } else {
+                        buf[4] = LTOATTRIB_APPLICATION_VENDOR_LEN;
+#ifdef HPE_BUILD
+                        buf[5] = (unsigned char) 'H';
+                        buf[6] = (unsigned char) 'P';
+                        buf[7] = (unsigned char) 'E';
 #elif defined QUANTUM_BUILD
-			buf[5] = (unsigned char) 'Q';
-			buf[6] = (unsigned char) 'U';
-			buf[7] = (unsigned char) 'A';
-			buf[8] = (unsigned char) 'N';
-			buf[9] = (unsigned char) 'T';
-			buf[10] = (unsigned char) 'U';
-			buf[11] = (unsigned char) 'M';
+                        buf[5] = (unsigned char) 'Q';
+                        buf[6] = (unsigned char) 'U';
+                        buf[7] = (unsigned char) 'A';
+                        buf[8] = (unsigned char) 'N';
+                        buf[9] = (unsigned char) 'T';
+                        buf[10] = (unsigned char) 'U';
+                        buf[11] = (unsigned char) 'M';
 #elif defined GENERIC_OEM_BUILD
-			buf[5] = (unsigned char) 'L';
-			buf[6] = (unsigned char) 'T';
-			buf[7] = (unsigned char) 'F';
-			buf[8] = (unsigned char) 'S';
+                        buf[5] = (unsigned char) 'L';
+                        buf[6] = (unsigned char) 'T';
+                        buf[7] = (unsigned char) 'F';
+                        buf[8] = (unsigned char) 'S';
 #else
 # error "No Application Vendor defined!"
 #endif
-			len = LTOATTRIB_APPLICATION_VENDOR_LEN + ATTRIB_HEADER_LEN;
-		}
-		status = ltotape_write_attribute(device, (const tape_partition_t) 0,
-				buf, len);
+                        len = LTOATTRIB_APPLICATION_VENDOR_LEN + ATTRIB_HEADER_LEN;
+                }
+                status = ltotape_write_attribute(device, (const tape_partition_t) 0, buf, len);
 
-		/* Cleanup. */
-		if (buf) {
-			free(buf);
-			buf = NULL;
-		}
-		if (status < 0) {
-			ltfsmsg(LTFS_WARN, "20024W",
-					LTOATTRIBID_APPLICATION_VENDOR, status);
-			ret = status;
-		}
+                /* Cleanup. */
+                if (buf) {
+                        free(buf);
+                        buf = NULL;
+                }
+                if (status < 0) {
+                        ltfsmsg(LTFS_WARN, "20024W",
+                                        LTOATTRIBID_APPLICATION_VENDOR, status);
+                        ret = status;
+                }
 
-		/* Set Application Name: */
-		buf = (unsigned char *) calloc(1, 40);
-		memset(buf, (int) 0x20, 40);
-		buf[0] = (unsigned char) (LTOATTRIBID_APPLICATION_NAME >> 8);
-		buf[1] = (unsigned char) (LTOATTRIBID_APPLICATION_NAME & 0xFF);
-		buf[2] = 1; /* format = ascii (01b) */
-		buf[3] = 0; /* attrib len is two bytes but only need one */
+                /* Set Application Name: */
+                buf = (unsigned char *) calloc(1, 40);
+                memset(buf, (int) 0x20, 40);
+                buf[0] = (unsigned char) (LTOATTRIBID_APPLICATION_NAME >> 8);
+                buf[1] = (unsigned char) (LTOATTRIBID_APPLICATION_NAME & 0xFF);
+                buf[2] = 1; /* format = ascii (01b) */
+                buf[3] = 0; /* attrib len is two bytes but only need one */
 
-		if (format == TC_FORMAT_DEFAULT) {
-			buf[4] = 0; /* set length to zero to delete the attribute */
-			len = ATTRIB_HEADER_LEN;
+                if (format == TC_FORMAT_DEFAULT) {
+                        buf[4] = 0; /* set length to zero to delete the attribute */
+                        len = ATTRIB_HEADER_LEN;
 
-		} else {
-			buf[4] = LTOATTRIB_APPLICATION_NAME_LEN;
-			srclen = strlen(PACKAGE_NAME);
-			len = (srclen > LTOATTRIB_APPLICATION_NAME_LEN) ?
-					LTOATTRIB_APPLICATION_NAME_LEN : srclen;
-			memcpy((void*) buf + 5, (const void*) PACKAGE_NAME, len);
-			len = LTOATTRIB_APPLICATION_NAME_LEN + ATTRIB_HEADER_LEN;
-		}
+                } else {
+                        buf[4] = LTOATTRIB_APPLICATION_NAME_LEN;
+                        srclen = strlen(PACKAGE_NAME);
+                        len = (srclen > LTOATTRIB_APPLICATION_NAME_LEN) ? LTOATTRIB_APPLICATION_NAME_LEN : srclen;
+                        memcpy((void*) buf + 5, (const void*) PACKAGE_NAME, len);
+                        len = LTOATTRIB_APPLICATION_NAME_LEN + ATTRIB_HEADER_LEN;
+                }
 
-		status = ltotape_write_attribute(device, (const tape_partition_t) 0,
-				buf, len);
+                status = ltotape_write_attribute(device, (const tape_partition_t) 0, buf, len);
 
-		/* Cleanup. */
-		if (buf) {
-			free(buf);
-			buf = NULL;
-		}
-		if (status < 0) {
-			ltfsmsg(LTFS_WARN, "20024W", LTOATTRIBID_APPLICATION_NAME, status);
-			ret = status;
-		}
+                /* Cleanup. */
+                if (buf) {
+                        free(buf);
+                        buf = NULL;
+                }
+                if (status < 0) {
+                        ltfsmsg(LTFS_WARN, "20024W", LTOATTRIBID_APPLICATION_NAME, status);
+                        ret = status;
+                }
 
-		/* Set Application Version: */
-		buf = (unsigned char *) calloc(1, 40);
-		memset(buf, (int) 0x20, 40);
-		buf[0] = (unsigned char) (LTOATTRIBID_APPLICATION_VERSION >> 8);
-		buf[1] = (unsigned char) (LTOATTRIBID_APPLICATION_VERSION & 0xFF);
-		buf[2] = 1; /* format = ascii (01b) */
-		buf[3] = 0; /* attrib len is two bytes but only need one */
+                /* Set Application Version: */
+                buf = (unsigned char *) calloc(1, 40);
+                memset(buf, (int) 0x20, 40);
+                buf[0] = (unsigned char) (LTOATTRIBID_APPLICATION_VERSION >> 8);
+                buf[1] = (unsigned char) (LTOATTRIBID_APPLICATION_VERSION & 0xFF);
+                buf[2] = 1; /* format = ascii (01b) */
+                buf[3] = 0; /* attrib len is two bytes but only need one */
 
-		if (format == TC_FORMAT_DEFAULT) {
-			buf[4] = 0; /* set length to zero to delete the attribute */
-			len = ATTRIB_HEADER_LEN;
+                if (format == TC_FORMAT_DEFAULT) {
+                        buf[4] = 0; /* set length to zero to delete the attribute */
+                        len = ATTRIB_HEADER_LEN;
 
-		} else {
-			buf[4] = LTOATTRIB_APPLICATION_VERSION_LEN;
-			srclen = strlen(PACKAGE_VERSION);
-			len = (srclen > LTOATTRIB_APPLICATION_VERSION_LEN) ?
-					LTOATTRIB_APPLICATION_VERSION_LEN : srclen;
-			strncpy((char*) buf + 5, PACKAGE_VERSION, len);
-			len = LTOATTRIB_APPLICATION_VERSION_LEN + ATTRIB_HEADER_LEN;
-		}
+                } else {
+                        buf[4] = LTOATTRIB_APPLICATION_VERSION_LEN;
+                        srclen = strlen(PACKAGE_VERSION);
+                        len = (srclen > LTOATTRIB_APPLICATION_VERSION_LEN) ? LTOATTRIB_APPLICATION_VERSION_LEN : srclen;
+                        strncpy((char*) buf + 5, PACKAGE_VERSION, len);
+                        len = LTOATTRIB_APPLICATION_VERSION_LEN + ATTRIB_HEADER_LEN;
+                }
 
-		status = ltotape_write_attribute(device, (const tape_partition_t) 0,
-				buf, len);
+                status = ltotape_write_attribute(device, (const tape_partition_t) 0, buf, len);
 
-		/* Cleanup. */
-		if (buf) {
-			free(buf);
-			buf = NULL;
-		}
-		if (status < 0) {
-			ltfsmsg(LTFS_WARN, "20024W",
-					LTOATTRIBID_APPLICATION_VERSION, status);
-			ret = status;
-		}
+                /* Cleanup. */
+                if (buf) {
+                        free(buf);
+                        buf = NULL;
+                }
+                if (status < 0) {
+                        ltfsmsg(LTFS_WARN, "20024W",
+                                        LTOATTRIBID_APPLICATION_VERSION, status);
+                        ret = status;
+                }
 
-		/* Set Application Format Version (to the value used in the format label, not the index -
-		 * though they should be the same at format time): */
-		buf = (unsigned char *) calloc(1, 40);
-		memset(buf, (int) 0x20, 40);
-		buf[0] = (unsigned char) (LTOATTRIBID_APP_FORMAT_VERSION >> 8);
-		buf[1] = (unsigned char) (LTOATTRIBID_APP_FORMAT_VERSION & 0xFF);
-		buf[2] = 1; /* format = ascii (01b) */
-		buf[3] = 0; /* attrib len is two bytes but only need one */
+                /* Set Application Format Version (to the value used in the format label, not the index -
+                 * though they should be the same at format time): */
+                buf = (unsigned char *) calloc(1, 40);
+                memset(buf, (int) 0x20, 40);
+                buf[0] = (unsigned char) (LTOATTRIBID_APP_FORMAT_VERSION >> 8);
+                buf[1] = (unsigned char) (LTOATTRIBID_APP_FORMAT_VERSION & 0xFF);
+                buf[2] = 1; /* format = ascii (01b) */
+                buf[3] = 0; /* attrib len is two bytes but only need one */
 
-		if (format == TC_FORMAT_DEFAULT) {
-			buf[4] = 0; /* set length to zero to delete the attribute */
-			len = ATTRIB_HEADER_LEN;
-		} else {
-			buf[4] = LTOATTRIB_APP_FORMAT_VERSION_LEN;
-			srclen = strlen(LTFS_LABEL_VERSION_STR);
-			len = (srclen > LTOATTRIB_APP_FORMAT_VERSION_LEN) ?
-					LTOATTRIB_APP_FORMAT_VERSION_LEN : srclen;
-			strncpy((char*) buf + 5, LTFS_LABEL_VERSION_STR, len);
-			len = LTOATTRIB_APP_FORMAT_VERSION_LEN + ATTRIB_HEADER_LEN;
-		}
+                if (format == TC_FORMAT_DEFAULT) {
+                        buf[4] = 0; /* set length to zero to delete the attribute */
+                        len = ATTRIB_HEADER_LEN;
+                } else {
+                        buf[4] = LTOATTRIB_APP_FORMAT_VERSION_LEN;
+                        srclen = strlen(LTFS_LABEL_VERSION_STR);
+                        len = (srclen > LTOATTRIB_APP_FORMAT_VERSION_LEN) ? LTOATTRIB_APP_FORMAT_VERSION_LEN : srclen;
+                        strncpy((char*) buf + 5, LTFS_LABEL_VERSION_STR, len);
+                        len = LTOATTRIB_APP_FORMAT_VERSION_LEN + ATTRIB_HEADER_LEN;
+                }
 
-		status = ltotape_write_attribute(device, (const tape_partition_t) 0,
-				buf, len);
+                status = ltotape_write_attribute(device, (const tape_partition_t) 0, buf, len);
 
-		/* Cleanup. */
-		if (buf) {
-			free(buf);
-			buf = NULL;
-		}
-		if (status < 0) {
-			ltfsmsg(LTFS_WARN, "20024W",
-					LTOATTRIBID_APP_FORMAT_VERSION, status);
-			ret = status;
-		}
+                /* Cleanup. */
+                if (buf) {
+                        free(buf);
+                        buf = NULL;
+                }
+                if (status < 0) {
+                        ltfsmsg(LTFS_WARN, "20024W", LTOATTRIBID_APP_FORMAT_VERSION, status);
+                        ret = status;
+                }
 
-		/* Set Barcode */
-		if (barcode_name && strlen(barcode_name)) {
-			barcode = (char *) calloc(1, LTOATTRIBID_BARCODE_LEN);
+                /* Set Barcode */
+                if (barcode_name && strlen(barcode_name)) {
+                        barcode = (char *) calloc(1, LTOATTRIBID_BARCODE_LEN);
 
-			if (strlen(barcode_name) > (LTOATTRIBID_BARCODE_LEN)) {
-				strncpy(barcode, barcode_name,
-						(LTOATTRIBID_BARCODE_LEN));
-			} else {
-				strncpy(barcode, barcode_name, strlen(barcode_name));
-			}
+                        if (strlen(barcode_name) > (LTOATTRIBID_BARCODE_LEN)) {
+                                strncpy(barcode, barcode_name, (LTOATTRIBID_BARCODE_LEN));
+                        } else {
+                                strncpy(barcode, barcode_name, strlen(barcode_name));
+                        }
 
-			buf = (unsigned char *) calloc(1,
-					(LTOATTRIBID_BARCODE_LEN + ATTRIB_HEADER_LEN));
-			memset(buf, (int) 0x20, (LTOATTRIBID_BARCODE_LEN + ATTRIB_HEADER_LEN));
-			buf[0] = (unsigned char) (LTOATTRIBID_BARCODE >> 8);
-			buf[1] = (unsigned char) (LTOATTRIBID_BARCODE & 0xFF);
-			buf[2] = 1; /* format = ascii (01b) */
-			buf[3] = 0; /* attrib len is two bytes but only need one */
+                        buf = (unsigned char *) calloc(1, (LTOATTRIBID_BARCODE_LEN + ATTRIB_HEADER_LEN));
+                        memset(buf, (int) 0x20, (LTOATTRIBID_BARCODE_LEN + ATTRIB_HEADER_LEN));
+                        buf[0] = (unsigned char) (LTOATTRIBID_BARCODE >> 8);
+                        buf[1] = (unsigned char) (LTOATTRIBID_BARCODE & 0xFF);
+                        buf[2] = 1; /* format = ascii (01b) */
+                        buf[3] = 0; /* attrib len is two bytes but only need one */
 
-			/* Delete barcode attribute if 6 blank spaces are recieved for barcode_name param */
-			if (format == TC_FORMAT_DEFAULT || !strcmp(barcode_name, "      ")) {
-				buf[4] = 0; /* set length to zero to delete the attribute */
-				len = ATTRIB_HEADER_LEN;
-			} else {
-				buf[4] = LTOATTRIBID_BARCODE_LEN;
-				srclen = strlen(barcode);
-				len = (srclen > LTOATTRIBID_BARCODE_LEN) ?
-						LTOATTRIBID_BARCODE_LEN : srclen;
-				strncpy((char*) buf + 5, barcode, len);
-				len = LTOATTRIBID_BARCODE_LEN + ATTRIB_HEADER_LEN;
-			}
+                        /* Delete barcode attribute if 6 blank spaces are recieved for barcode_name param */
+                        if (format == TC_FORMAT_DEFAULT || !strcmp(barcode_name, "      ")) {
+                                buf[4] = 0; /* set length to zero to delete the attribute */
+                                len = ATTRIB_HEADER_LEN;
+                        } else {
+                                buf[4] = LTOATTRIBID_BARCODE_LEN;
+                                srclen = strlen(barcode);
+                                len = (srclen > LTOATTRIBID_BARCODE_LEN) ? LTOATTRIBID_BARCODE_LEN : srclen;
+                                strncpy((char*) buf + 5, barcode, len);
+                                len = LTOATTRIBID_BARCODE_LEN + ATTRIB_HEADER_LEN;
+                        }
 
-			status = ltotape_write_attribute(device, (const tape_partition_t) 0,
-					buf, len);
+                        status = ltotape_write_attribute(device, (const tape_partition_t) 0, buf, len);
 
-			/* Cleanup. */
-			if (buf) {
-				free(buf);
-				buf = NULL;
-			}
-			if (status < 0) {
-				ltfsmsg(LTFS_WARN, "20024W",
-						LTOATTRIBID_BARCODE, status);
-				ret = status;
-			}
-		}
+                        /* Cleanup. */
+                        if (buf) {
+                                free(buf);
+                                buf = NULL;
+                        }
+                        if (barcode) {
+                          free (barcode);
+                          barcode = NULL;
+                        }
+                        if (status < 0) {
+                                ltfsmsg(LTFS_WARN, "20024W", LTOATTRIBID_BARCODE, status);
+                                ret = status;
+                        }
+                }
 
-		/* Set User Medium Text label */
-		volume_name = (char *) calloc(1, LTOATTRIBID_USR_MED_TXT_LABEL_LEN);
+                /* Set User Medium Text label */
+                volume_name = (char *) calloc(1, LTOATTRIBID_USR_MED_TXT_LABEL_LEN);
 
-		if (vol_name && strlen(vol_name)) {
-			if (strlen(vol_name) > (LTOATTRIBID_USR_MED_TXT_LABEL_LEN - 1)) {
-				strncpy(volume_name, vol_name,
-						(LTOATTRIBID_USR_MED_TXT_LABEL_LEN - 1));
-			} else {
-				strncpy(volume_name, vol_name, strlen(vol_name));
-			}
-		}
+                if (vol_name && strlen(vol_name)) {
+                        if (strlen(vol_name) > (LTOATTRIBID_USR_MED_TXT_LABEL_LEN - 1)) {
+                                strncpy(volume_name, vol_name, (LTOATTRIBID_USR_MED_TXT_LABEL_LEN - 1));
+                        } else {
+                                strncpy(volume_name, vol_name, strlen(vol_name));
+                        }
+                }
 
-		buf = (unsigned char *) calloc(1,
-				(LTOATTRIBID_USR_MED_TXT_LABEL_LEN + ATTRIB_HEADER_LEN));
-		buf[0] = (unsigned char) (LTOATTRIBID_USR_MED_TXT_LABEL >> 8);
-		buf[1] = (unsigned char) (LTOATTRIBID_USR_MED_TXT_LABEL & 0xFF);
-		buf[2] = 2; /* format = text (10b) */
-		buf[3] = 0; /* attrib len is two bytes but only need one */
+                buf = (unsigned char *) calloc(1, (LTOATTRIBID_USR_MED_TXT_LABEL_LEN + ATTRIB_HEADER_LEN));
+                buf[0] = (unsigned char) (LTOATTRIBID_USR_MED_TXT_LABEL >> 8);
+                buf[1] = (unsigned char) (LTOATTRIBID_USR_MED_TXT_LABEL & 0xFF);
+                buf[2] = 2; /* format = text (10b) */
+                buf[3] = 0; /* attrib len is two bytes but only need one */
 
-		if (format == TC_FORMAT_DEFAULT) {
-			buf[4] = 0; /* set length to zero to delete the attribute */
-			len = ATTRIB_HEADER_LEN;
-		} else {
-			buf[4] = LTOATTRIBID_USR_MED_TXT_LABEL_LEN;
-			srclen = strlen(volume_name);
-			len = (srclen > LTOATTRIBID_USR_MED_TXT_LABEL_LEN) ?
-					LTOATTRIBID_USR_MED_TXT_LABEL_LEN : srclen;
-			strncpy((char*) buf + 5, volume_name, len);
-			len = LTOATTRIBID_USR_MED_TXT_LABEL_LEN + ATTRIB_HEADER_LEN;
-		}
+                if (format == TC_FORMAT_DEFAULT) {
+                        buf[4] = 0; /* set length to zero to delete the attribute */
+                        len = ATTRIB_HEADER_LEN;
+                } else {
+                        buf[4] = LTOATTRIBID_USR_MED_TXT_LABEL_LEN;
+                        srclen = strlen(volume_name);
+                        len = (srclen > LTOATTRIBID_USR_MED_TXT_LABEL_LEN) ? LTOATTRIBID_USR_MED_TXT_LABEL_LEN : srclen;
+                        strncpy((char*) buf + 5, volume_name, len);
+                        len = LTOATTRIBID_USR_MED_TXT_LABEL_LEN + ATTRIB_HEADER_LEN;
+                }
 
-		status = ltotape_write_attribute(device, (const tape_partition_t) 0,
-				buf, len);
+                status = ltotape_write_attribute(device, (const tape_partition_t) 0, buf, len);
 
-		/* Cleanup. */
-		if (buf) {
-			free(buf);
-			buf = NULL;
-		}
+                /* Cleanup. */
+                if (buf) {
+                        free(buf);
+                        buf = NULL;
+                }
 
-		if (volume_name) {
-			free(volume_name);
-			volume_name = NULL;
-		}
+                if (volume_name) {
+                        free(volume_name);
+                        volume_name = NULL;
+                }
 
-		if (status < 0) {
-			ltfsmsg(LTFS_WARN, "20024W",
-					LTOATTRIBID_USR_MED_TXT_LABEL, status);
-			ret = status;
-		}
-	}
-	return ret;
+                if (status < 0) {
+                        ltfsmsg(LTFS_WARN, "20024W", LTOATTRIBID_USR_MED_TXT_LABEL, status);
+                        ret = status;
+                }
+
+                /* Set Volume Lock State: */
+                if (lockbit != NOLOCK_MAM) {
+
+                        buf = (unsigned char *) calloc(1, (LTOATTRIBID_VOL_LOCK_STATE_LEN + ATTRIB_HEADER_LEN));
+                        memset(buf, (int) 0x20, (LTOATTRIBID_VOL_LOCK_STATE_LEN + ATTRIB_HEADER_LEN));
+                        buf[0] = (unsigned char) (LTOATTRIBID_VOL_LOCK_STATE >> 8);
+                        buf[1] = (unsigned char) (LTOATTRIBID_VOL_LOCK_STATE & 0xFF);
+                        buf[2] = 0; /* format = binary */
+                        buf[3] = 0; /* attrib len is two bytes but only need one */
+
+                        if (format == TC_FORMAT_DEFAULT) {
+                                buf[4] = 0; /* set length to zero to delete the attribute */
+                                len = ATTRIB_HEADER_LEN;
+
+                        } else {
+                                buf[4] = LTOATTRIBID_VOL_LOCK_STATE_LEN;
+                                buf[5] = (unsigned char) lockbit;
+                                len = LTOATTRIBID_VOL_LOCK_STATE_LEN + ATTRIB_HEADER_LEN;
+                        }
+
+                        status = ltotape_write_attribute(device, (const tape_partition_t) 0, buf, len);
+
+                        /* Cleanup. */
+                        if (buf) {
+                                free(buf);
+                                buf = NULL;
+                        }
+                        if (status < 0) {
+                                ltfsmsg(LTFS_WARN, "20024W", LTOATTRIBID_VOL_LOCK_STATE, status);
+                                ret = status;
+                        }
+                }
+                /* Set volume uuid */
+                if (vol_mam_uuid && strlen(vol_mam_uuid)) {
+                        volume_mam_uuid = (char *) calloc(1, LTOATTRIBID_VOL_UUID_LEN);
+
+                        if (strlen(vol_mam_uuid) > (LTOATTRIBID_VOL_UUID_LEN)) {
+                                strncpy(volume_mam_uuid, vol_mam_uuid, (LTOATTRIBID_VOL_UUID_LEN));
+                        } else {
+                                strncpy(volume_mam_uuid, vol_mam_uuid, strlen(vol_mam_uuid));
+                        }
+
+                        buf = (unsigned char *) calloc(1, (LTOATTRIBID_VOL_UUID_LEN + ATTRIB_HEADER_LEN));
+                        memset(buf, (int) 0x20, (LTOATTRIBID_VOL_UUID_LEN + ATTRIB_HEADER_LEN));
+                        buf[0] = (unsigned char) (LTOATTRIBID_VOL_UUID >> 8);
+                        buf[1] = (unsigned char) (LTOATTRIBID_VOL_UUID & 0xFF);
+                        buf[2] = 0; /* format = binary */
+                        buf[3] = 0; /* attrib len is two bytes but only need one */
+
+                        if (format == TC_FORMAT_DEFAULT) {
+                                buf[4] = 0; /* set length to zero to delete the attribute */
+                                len = ATTRIB_HEADER_LEN;
+                        } else {
+                                buf[4] = LTOATTRIBID_VOL_UUID_LEN;
+                                srclen = strlen(volume_mam_uuid);
+                                len = (srclen > LTOATTRIBID_VOL_UUID_LEN) ? LTOATTRIBID_VOL_UUID_LEN : srclen;
+                                strncpy((char*) buf + 5, volume_mam_uuid, len);
+                                len = LTOATTRIBID_VOL_UUID_LEN + ATTRIB_HEADER_LEN;
+                        }
+
+                        status = ltotape_write_attribute(device, (const tape_partition_t) 0, buf, len);
+
+                        /* Cleanup. */
+                        if (buf) {
+                                free(buf);
+                                buf = NULL;
+                        }
+
+                        if (volume_mam_uuid) {
+                                free(volume_mam_uuid);
+                                volume_mam_uuid = NULL;
+                        }
+
+                        if (status < 0) {
+                                ltfsmsg(LTFS_WARN, "20024W", LTOATTRIBID_VOL_UUID, status);
+                                /* This attribute is optional (Even if failed to write this
+                                   should not throw error) hence printing a warning and returning
+                                   the status as good */
+                                ret = 0;
+                        }
+                }
+        }
+        return ret;
 }
 
 /**------------------------------------------------------------------------**
@@ -2602,13 +2885,15 @@ static int ltotape_set_MAMattributes (void* device, TC_FORMAT_TYPE format,
  * @param cart_health a pointer to a struct of health-reporting params
  * @return 0 on success or a negative value on error
  */
-int ltotape_get_cartridge_health(void *device, struct tc_cartridge_health *cart_health)
+int ltotape_get_cartridge_health (void *device, struct tc_cartridge_health *cart_health)
 {
-  unsigned char logdata[1024];
+  unsigned char logdata[LOGSENSEPAGE];
   unsigned char buf[16];
-  int param_size, i;
-  uint64_t loghlt;
-  int rc;
+  int           param_size = 0;
+  int           i = 0;
+  int           rc = 0;
+  uint64_t      loghlt;
+
   
 /*
  * "Tape Efficiency" is not supported:
@@ -2633,54 +2918,51 @@ int ltotape_get_cartridge_health(void *device, struct tc_cartridge_health *cart_
   cart_health->passes_begin     = UNSUPPORTED_CARTRIDGE_HEALTH;
   cart_health->passes_middle    = UNSUPPORTED_CARTRIDGE_HEALTH;
 
-  rc = ltotape_logsense(device, LOG_PAGE_VOLUMESTATS, logdata, 1024);
+  rc = ltotape_logsense (device, LOG_PAGE_VOLUMESTATS, logdata, LOGSENSEPAGE);
   if (rc) {
-    ltfsmsg(LTFS_ERR, "12135E", LOG_PAGE_VOLUMESTATS, rc);
+    ltfsmsg (LTFS_ERR, "12135E", LOG_PAGE_VOLUMESTATS, rc);
 
   } else {
-    for (i = 0; i < (int)((sizeof(volstats)/sizeof(volstats[0]))); i++) {
-      if (parse_logPage(logdata, volstats[i], &param_size, buf, 16)) {
-	ltfsmsg(LTFS_ERR, "12136E");
+    for (i = 0; i < (int)((sizeof (volstats) / sizeof (volstats[0]))); i++) {
+      if (parse_logPage (logdata, volstats[i], &param_size, buf, 16)) {
+        ltfsmsg (LTFS_ERR, "12136E");
 
       } else {
-	switch(param_size) {
-	case sizeof(uint8_t):
-	  loghlt = (uint64_t)(buf[0]);
-	  break;
-	case sizeof(uint16_t):
-	  loghlt = ((uint64_t)buf[0] << 8) + (uint64_t)buf[1];
-	  break;
-	case sizeof(uint32_t):
-	  loghlt = ((uint64_t)buf[0] << 24) + ((uint64_t)buf[1] << 16) +
-	           ((uint64_t)buf[2] << 8)  +  (uint64_t)buf[3];
-	  break;
-	case sizeof(uint64_t):
-	  loghlt = ((uint64_t)buf[0] << 56) + ((uint64_t)buf[1] << 48) +
-	           ((uint64_t)buf[2] << 40) + ((uint64_t)buf[3] << 32) +
-	           ((uint64_t)buf[4] << 24) + ((uint64_t)buf[5] << 16) +
-	           ((uint64_t)buf[6] << 8)  +  (uint64_t)buf[7];
-	  break;
-	default:
-	  loghlt = UNSUPPORTED_CARTRIDGE_HEALTH;
-	  break;
-	}
-	
-	switch(volstats[i]) {
-	case VOLSTATS_MOUNTS:           cart_health->mounts = loghlt;           break;
-	case VOLSTATS_WRITTEN_DS:	cart_health->written_ds = loghlt;       break;
-	case VOLSTATS_WRITE_TEMPS:	cart_health->write_temps = loghlt;      break;
-	case VOLSTATS_WRITE_PERMS:	cart_health->write_perms = loghlt;      break;
-	case VOLSTATS_READ_DS:		cart_health->read_ds = loghlt;	        break;
-	case VOLSTATS_READ_TEMPS:	cart_health->read_temps = loghlt;       break;
-	case VOLSTATS_READ_PERMS:	cart_health->read_perms = loghlt;       break;
-	case VOLSTATS_WRITE_PERMS_PREV: cart_health->write_perms_prev = loghlt; break;
-	case VOLSTATS_READ_PERMS_PREV:	cart_health->read_perms_prev = loghlt;  break;
-	case VOLSTATS_WRITE_MB:		cart_health->written_mbytes = loghlt;   break;
-	case VOLSTATS_READ_MB:		cart_health->read_mbytes = loghlt;      break;
-	case VOLSTATS_PASSES_BEGIN:	cart_health->passes_begin = loghlt;	break;
-	case VOLSTATS_PASSES_MIDDLE:	cart_health->passes_middle = loghlt;	break;
-	default: break;
-	}
+        switch (param_size) {
+        case sizeof (uint8_t):
+          loghlt = (uint64_t)(buf[0]);
+          break;
+        case sizeof (uint16_t):
+          loghlt = ((uint64_t)buf[0] << 8) + (uint64_t)buf[1];
+          break;
+        case sizeof (uint32_t):
+          loghlt = ((uint64_t)buf[0] << 24) + ((uint64_t)buf[1] << 16) + ((uint64_t)buf[2] << 8) + (uint64_t)buf[3];
+          break;
+        case sizeof (uint64_t):
+          loghlt = ((uint64_t)buf[0] << 56) + ((uint64_t)buf[1] << 48) + ((uint64_t)buf[2] << 40) + ((uint64_t)buf[3] << 32) +
+                   ((uint64_t)buf[4] << 24) + ((uint64_t)buf[5] << 16) + ((uint64_t)buf[6] << 8 ) +  (uint64_t)buf[7];
+          break;
+        default:
+          loghlt = UNSUPPORTED_CARTRIDGE_HEALTH;
+          break;
+        }
+
+        switch (volstats[i]) {
+        case VOLSTATS_MOUNTS:          cart_health->mounts = loghlt;           break;
+        case VOLSTATS_WRITTEN_DS:      cart_health->written_ds = loghlt;       break;
+        case VOLSTATS_WRITE_TEMPS:     cart_health->write_temps = loghlt;      break;
+        case VOLSTATS_WRITE_PERMS:     cart_health->write_perms = loghlt;      break;
+        case VOLSTATS_READ_DS:         cart_health->read_ds = loghlt;          break;
+        case VOLSTATS_READ_TEMPS:      cart_health->read_temps = loghlt;       break;
+        case VOLSTATS_READ_PERMS:      cart_health->read_perms = loghlt;       break;
+        case VOLSTATS_WRITE_PERMS_PREV:cart_health->write_perms_prev = loghlt; break;
+        case VOLSTATS_READ_PERMS_PREV: cart_health->read_perms_prev = loghlt;  break;
+        case VOLSTATS_WRITE_MB:        cart_health->written_mbytes = loghlt;   break;
+        case VOLSTATS_READ_MB:         cart_health->read_mbytes = loghlt;      break;
+        case VOLSTATS_PASSES_BEGIN:    cart_health->passes_begin = loghlt;     break;
+        case VOLSTATS_PASSES_MIDDLE:   cart_health->passes_middle = loghlt;    break;
+        default: break;
+        }
       }
     }
   }
@@ -2688,7 +2970,7 @@ int ltotape_get_cartridge_health(void *device, struct tc_cartridge_health *cart_
   return 0;
 }
 
-/**
+/**------------------------------------------------------------------------**
  * Get tape alert information
  * @param device a pointer to the ltotape backend
  * @param taflags a pointer to a 64-bit uint map of the TapeAlert flags
@@ -2696,31 +2978,35 @@ int ltotape_get_cartridge_health(void *device, struct tc_cartridge_health *cart_
  */
 int ltotape_get_tape_alert (void *device, uint64_t* taflags)
 {
-	unsigned char	logdata[1024];
-	unsigned char	buf[16];
-	int				param_size, i;
-	int				rc = DEVICE_GOOD;
+  unsigned char logdata[LOGSENSEPAGE];
+  unsigned char buf[16];
+  int           param_size, i;
+  int           rc = DEVICE_GOOD;
 
-	/* Read the Tape Alert flags log page: */
-	*taflags = 0;
-	rc = ltotape_logsense(device, LOG_PAGE_TAPE_ALERT, logdata, 1024);
-	if (rc)
-		ltfsmsg(LTFS_ERR, "12135E", LOG_PAGE_TAPE_ALERT, rc);
-	else {
-		for (i = 1; i <= 64; i++) {
-			if (parse_logPage(logdata, (uint16_t) i, &param_size, buf, 16)
-					|| (param_size != sizeof(uint8_t))) {
-				ltfsmsg(LTFS_ERR, "12136E");
-				rc = -2;
-			}
+  /*
+   * Read the Tape Alert flags log page:
+   */
+  *taflags = 0;
 
-			if (buf[0]) {
-				*taflags += (uint64_t)(1) << (i - 1);
-			}
-		}
-	}
+  rc = ltotape_logsense (device, LOG_PAGE_TAPE_ALERT, logdata, LOGSENSEPAGE);
+  if (rc) {
+    ltfsmsg (LTFS_ERR, "12135E", LOG_PAGE_TAPE_ALERT, rc);
 
-	return rc;
+  } else {
+    for (i = 1; i <= 64; i++) {
+      if (parse_logPage (logdata, (uint16_t)i, &param_size, buf, 16) ||
+        (param_size != sizeof (uint8_t))) {
+        ltfsmsg (LTFS_ERR, "12136E");
+        rc = -2;
+      }
+
+      if (buf[0]) {
+        *taflags += (uint64_t)(1) << (i - 1);
+      }
+    }
+  }
+
+  return rc;
 }
 
 /**
@@ -2732,12 +3018,12 @@ int ltotape_get_tape_alert (void *device, uint64_t* taflags)
  */
 int ltotape_clear_tape_alert(void *device, uint64_t tape_alert)
 {
-	int						rc = DEVICE_GOOD;
-	ltotape_scsi_io_type	*sio = (ltotape_scsi_io_type *) device;
+    int                   rc  = DEVICE_GOOD;
+    ltotape_scsi_io_type *sio = (ltotape_scsi_io_type *) device;
 
-	CHECK_ARG_NULL(sio, -EDEV_INVALID_ARG);
+    CHECK_ARG_NULL(sio, -EDEV_INVALID_ARG);
 
-	return rc;
+    return rc;
 }
 
 /**
@@ -2750,8 +3036,8 @@ int ltotape_clear_tape_alert(void *device, uint64_t tape_alert)
  */
 int ltotape_get_xattr(void *device, const char *name, char **buf)
 {
-	/* At this time, no vendor unique xattr is supported for read */
-	return -LTFS_NO_XATTR;
+        /* At this time, no vendor unique xattr is supported for read */
+        return -LTFS_NO_XATTR;
 }
 
 /**
@@ -2764,8 +3050,8 @@ int ltotape_get_xattr(void *device, const char *name, char **buf)
  */
 int ltotape_set_xattr(void *device, const char *name, const char *buf, size_t size)
 {
-	/* At this time, no vendor unique xattr is supported for write */
-	return -LTFS_NO_XATTR;
+        /* At this time, no vendor unique xattr is supported for write */
+        return -LTFS_NO_XATTR;
 }
 
 /**------------------------------------------------------------------------**
@@ -2774,93 +3060,107 @@ int ltotape_set_xattr(void *device, const char *name, const char *buf, size_t si
  * @param part which partition to investigate
  * @return EOD_GOOD, EOD_MISSING, or EOD_UNKNOWN if we can't tell
  */
-int ltotape_get_eod_status(void *device, int part)
+int ltotape_get_eod_status (void *device, int part)
 {
-  unsigned char logdata [1024];
-  unsigned char buf [16];
-  int           param_size, rc;
-  unsigned int  i;
-  uint32_t      part_cap[2] = {EOD_UNKNOWN, EOD_UNKNOWN};
+  unsigned char logdata[LOGSENSEPAGE];
+  unsigned char buf[16];
+  int           param_size = 0;
+  int           rc = 0;
+  unsigned int  i = 0;
+  unsigned char paramlen = 0;
+  uint16_t      partition = 0;
+  uint32_t      part_cap[2] = { EOD_UNKNOWN, EOD_UNKNOWN };
   static int    done_report = 0;
-  
-/*
- * Read the Volume Statistics log page:
- */
-  rc = ltotape_logsense (device, LOG_PAGE_VOLUMESTATS, logdata, 1024);
+  drive_family  drv;
+
+  /*
+   * Read the Volume Statistics log page:
+   */
+  rc = ltotape_logsense (device, LOG_PAGE_VOLUMESTATS, logdata, LOGSENSEPAGE);
   if (rc) {
-    ltfsmsg(LTFS_WARN, "12170W", LOG_PAGE_VOLUMESTATS, rc);
+    ltfsmsg (LTFS_WARN, "12170W", LOG_PAGE_VOLUMESTATS, rc);
     return EOD_UNKNOWN;
   }
 
-/*
- * Check if the drive f/w has been updated to fully support the required param; 
- *  if not, all we know for sure is that we don't know for sure.  But if we report
- *  EOD_UNKNOWN, the user will be presented with multiple warning messages about 
- *  unable to check EOD status, which in the vast majority of cases will be irrelevant..
- *  So (for now at least) we'll report EOD_GOOD and hope it works out ok...
- */
-  if (parse_logPage (logdata, (uint16_t)VOLSTATS_VU_PGFMTVER, &param_size, buf, 2) == -1) {
-    if (!done_report) {
-      ltfsmsg (LTFS_DEBUG, "20097D");
-      done_report = 1;
+  /*
+   * Check if the drive f/w has been updated to fully support the required param;
+   *  if not, all we know for sure is that we don't know for sure.  But if we report
+   *  EOD_UNKNOWN, the user will be presented with multiple warning messages about
+   *  unable to check EOD status, which in the vast majority of cases will be irrelevant..
+   *  So (for now at least) we'll report EOD_GOOD and hope it works out ok...
+   *
+   * LTO7 and LTO8 drives do not support this log parameter but the firmware does support
+   *   the required features, so this initial check is not necessary and we can move on
+   *   to the next part... 
+   */
+  drv = ((ltotape_scsi_io_type *)device)->type;
+  if ((drv != drive_lto7) && (drv != drive_lto8)) {
+    if (parse_logPage (logdata, (uint16_t)VOLSTATS_VU_PGFMTVER, &param_size, buf, 2) == -1) {
+      if (!done_report) {
+        ltfsmsg (LTFS_DEBUG, "20097D");
+        done_report = 1;
+      }
+      return EOD_GOOD;
     }
-    return EOD_GOOD;
   }
 
-/* 
- * Find & extract the "Approximate used native capacity of partitions" param (0x203):
- */
-  if ((parse_logPage (logdata, (uint16_t)VOLSTATS_USED_CAPACITY, &param_size, buf, 16)) ||
-      (param_size != sizeof(buf))) {
-    ltfsmsg(LTFS_WARN, "12171W");
+  /*
+   * Find & extract the "Approximate used native capacity of partitions" param (0x203):
+   */
+  if ((parse_logPage (logdata, (uint16_t)VOLSTATS_USED_CAPACITY, &param_size, buf, 16) != 0) || 
+      (param_size != sizeof (buf))) {
+    ltfsmsg (LTFS_WARN, "12171W");
     return EOD_UNKNOWN;
   }
 
+  /*
+   * buf should now contain two 8-byte partition record descriptors, so we should be
+   *  able to pick out the capacity value for both partitions...
+   */
   i = 0;
-  while (i < sizeof(buf)) {
-    unsigned char len;
-    uint16_t part_buf;
-    
-    len = buf[i];
-    part_buf = (uint16_t)(buf[i + 2] << 8) + (uint16_t) buf[i + 3];
+  while (i < sizeof (buf)) {
+    paramlen = buf[i];
+    partition = (uint16_t)(buf[i + 2] << 8) + (uint16_t)buf[i + 3];
 
-    if (((len - LOG_PAGE_VOL_PART_HEADER_SIZE + 1) == sizeof(uint32_t)) &&
-	(part_buf < 2)) {
-      part_cap[part_buf] = ((uint32_t) buf[i + 4] << 24) +
-	                   ((uint32_t) buf[i + 5] << 16) +
-			   ((uint32_t) buf[i + 6] << 8) +
-			    (uint32_t) buf[i + 7];
+    if (((paramlen - LOG_PAGE_VOL_PART_HEADER_SIZE + 1) == sizeof (uint32_t)) && 
+        (partition < 2)) {
+
+      part_cap[partition] = ((uint32_t)buf[i + 4] << 24) + ((uint32_t)buf[i + 5] << 16) +
+                            ((uint32_t)buf[i + 6] <<  8) +  (uint32_t)buf[i + 7];
+
     } else {
-      ltfsmsg(LTFS_WARN, "12172W", i, part_buf, len);
+      ltfsmsg (LTFS_WARN, "12172W", i, partition, paramlen);
+      return EOD_UNKNOWN;
     }
 
-    i += (len + 1);
+    i += (paramlen + 1);
   }
-  
-  return (part_cap[part] == 0xFFFFFFFF) ?  EOD_MISSING : EOD_GOOD;
+
+  return (part_cap[part] == 0xFFFFFFFF) ? EOD_MISSING : EOD_GOOD;
 }
 
 /**------------------------------------------------------------------------**
  * Print out options specific to this backend
  * @return Nothing
  */
-void ltotape_help_message(const char *progname)
+void ltotape_help_message (const char* progname)
 {
-	if (! strcmp(progname, "ltfs")) {
-		fprintf(stderr,
-				"LTOTAPE backend options:\n"
-				"    -o devname=<dev>          tape device (default=%s)\n"
-				"    -o log_directory=<dir>    log snapshot directory (default=%s)\n"
-				"    -o nosizelimit            remove 512kB limit (NOT RECOMMENDED)\n\n",
-				ltotape_default_device,
-				ltotape_get_default_snapshotdir());
-	} else {
-		fprintf(stderr,
-				"LTOTAPE backend options:\n"
-				"    -o log_directory=<dir>    log snapshot directory (default=%s)\n"
-				"    -o nosizelimit            remove 512kB limit (NOT RECOMMENDED)\n\n",
-				ltotape_get_default_snapshotdir());
-	}
+  if (!strcmp (progname, "ltfs")) {
+    fprintf (stderr,
+      "LTOTAPE backend options:\n"
+      "    -o devname=<dev>          tape device (default=%s)\n"
+      "    -o log_directory=<dir>    log snapshot directory (default=%s)\n"
+      "    -o nosizelimit            remove 512kB limit (NOT RECOMMENDED)\n\n",
+      ltotape_default_device,
+      ltotape_get_default_snapshotdir ());
+
+  } else {
+    fprintf (stderr,
+      "LTOTAPE backend options:\n"
+      "  -o log_directory=<dir>      log snapshot directory (default=%s)\n"
+      "  -o nosizelimit              remove 512kB limit (NOT RECOMMENDED)\n\n",
+      ltotape_get_default_snapshotdir ());
+  }
 }
 
 /**------------------------------------------------------------------------**
@@ -2872,26 +3172,25 @@ const char *ltotape_default_device_name(void)
    return ltotape_default_device;
 }
 
-int ltotape_set_key(void *device, const unsigned char *keyalias,
-		const unsigned char *key)
+int ltotape_set_key(void *device, const unsigned char *keyalias, const unsigned char *key)
 {
-	return 0;
+        return 0;
 }
 
 int ltotape_get_keyalias(void *device, unsigned char **keyalias)
 {
-	return 0;
+        return 0;
 }
 
 int ltotape_takedump_drive(void *device)
 {
-	return 0;
+        // CR10859 - this was stubbed out before...
+        return ltotape_log_snapshot (device, FALSE); // FALSE = not a minidump
 }
 
-bool ltotape_is_mountable(void *device, const char *barcode,
-		const unsigned char density_code)
+bool ltotape_is_mountable(void *device, const char *barcode, const unsigned char density_code)
 {
-	return true;
+        return true;
 }
 
 /**
@@ -2901,14 +3200,14 @@ bool ltotape_is_mountable(void *device, const char *barcode,
  * @param vol_name An optional volume name to the tape.
  * @return 0 on success, a negative value on error.
  */
-int ltotape_update_mam_attr(void *device, TC_FORMAT_TYPE format,
-		const char *vol_name,unsigned int attribute_id, const char *barcode_name) {
+int ltotape_update_mam_attr (void *device, TC_FORMAT_TYPE format, const char *vol_name,unsigned int attribute_id, const char *barcode_name, mam_lockval lockbit)
+{
 
-	int status = -1;
+        int status = -1;
 
-	status = ltotape_set_MAMattributes(device, format, vol_name, attribute_id, barcode_name);
+        status = ltotape_set_MAMattributes(device, format, vol_name, attribute_id, barcode_name, lockbit, NULL);
 
-	return status;
+        return status;
 }
 
 /**
@@ -2919,11 +3218,11 @@ int ltotape_update_mam_attr(void *device, TC_FORMAT_TYPE format,
  */
 int ltotape_get_worm_status(void *device, bool *is_worm)
 {
-	int status = 0;
+        int status = 0;
 
-	*is_worm = false;
+        *is_worm = false;
 
-	return status;
+        return status;
 }
 
 /**------------------------------------------------------------------------**
@@ -2943,62 +3242,63 @@ const char *tape_dev_get_message_bundle_name(void **message_data)
  *  and provide a function to access the structure:
  */
 struct tape_ops ltotape_drive_handler = {
-	.open                   = ltotape_open,
-	.reopen                 = ltotape_reopen,
-	.close                  = ltotape_close,
-	.close_raw              = ltotape_close_raw,
-	.is_connected           = ltotape_is_connected,
-	.inquiry                = ltotape_inquiry,
-	.inquiry_page           = ltotape_inquiry_page,
-	.test_unit_ready        = ltotape_test_unit_ready,
-	.read                   = ltotape_read,
-	.write                  = ltotape_write,
-	.writefm                = ltotape_writefm,
-	.rewind                 = ltotape_rewind,
-	.locate                 = ltotape_locate,
-	.space                  = ltotape_space,
-	.erase                  = ltotape_erase,
-	.load                   = ltotape_load,
-	.unload                 = ltotape_unload,
-	.readpos                = ltotape_readposition,
-	.setcap                 = ltotape_setcap,
-	.format                 = ltotape_format,
-	.remaining_capacity     = ltotape_remaining_capacity,
-	.logsense               = ltotape_logsense,
-	.modesense              = ltotape_modesense,
-	.modeselect             = ltotape_modeselect,
-	.reserve_unit           = ltotape_reserve_unit,
-	.release_unit           = ltotape_release_unit,
-	.prevent_medium_removal = ltotape_prevent_medium_removal,
-	.allow_medium_removal   = ltotape_allow_medium_removal,
-	.read_attribute         = ltotape_read_attribute,
-	.write_attribute        = ltotape_write_attribute,
-	.allow_overwrite        = ltotape_allow_overwrite,
-	.report_density         = ltotape_report_density,
-	.set_compression        = ltotape_set_compression,
-	.set_default            = ltotape_set_default,
-	.get_cartridge_health   = ltotape_get_cartridge_health,
-    .get_tape_alert         = ltotape_get_tape_alert,
-    .clear_tape_alert       = ltotape_clear_tape_alert,
-	.get_xattr              = ltotape_get_xattr,
-	.set_xattr              = ltotape_set_xattr,
-	.get_eod_status         = ltotape_get_eod_status,
-	.get_parameters         = ltotape_get_parameters,
-	.get_device_list        = ltotape_get_device_list,
-	.help_message           = ltotape_help_message,
-	.parse_opts             = ltotape_parse_opts,
-	.default_device_name    = ltotape_default_device_name,
-	.set_key                = ltotape_set_key,
-	.get_keyalias           = ltotape_get_keyalias,
-	.takedump_drive         = ltotape_takedump_drive,
-	.is_mountable           = ltotape_is_mountable,
-	.update_mam_attr        = ltotape_update_mam_attr,
-	.get_worm_status        = ltotape_get_worm_status,
+        .open                   = ltotape_open,
+        .reopen                 = ltotape_reopen,
+        .close                  = ltotape_close,
+        .close_raw              = ltotape_close_raw,
+        .is_connected           = ltotape_is_connected,
+        .inquiry                = ltotape_inquiry,
+        .inquiry_page           = ltotape_inquiry_page,
+        .test_unit_ready        = ltotape_test_unit_ready,
+        .read                   = ltotape_read,
+        .write                  = ltotape_write,
+        .writefm                = ltotape_writefm,
+        .rewind                 = ltotape_rewind,
+        .locate                 = ltotape_locate,
+        .space                  = ltotape_space,
+        .erase                  = ltotape_erase,
+        .load                   = ltotape_load,
+        .unload                 = ltotape_unload,
+        .loadunload             = ltotape_ext_loadunload,
+        .readpos                = ltotape_readposition,
+        .setcap                 = ltotape_setcap,
+        .format                 = ltotape_format,
+        .remaining_capacity     = ltotape_remaining_capacity,
+        .logsense               = ltotape_logsense,
+        .modesense              = ltotape_modesense,
+        .modeselect             = ltotape_modeselect,
+        .reserve_unit           = ltotape_reserve_unit,
+        .release_unit           = ltotape_release_unit,
+        .prevent_medium_removal = ltotape_prevent_medium_removal,
+        .allow_medium_removal   = ltotape_allow_medium_removal,
+        .read_attribute         = ltotape_read_attribute,
+        .write_attribute        = ltotape_write_attribute,
+        .allow_overwrite        = ltotape_allow_overwrite,
+        .report_density         = ltotape_report_density,
+        .set_compression        = ltotape_set_compression,
+        .set_default            = ltotape_set_default,
+        .get_cartridge_health   = ltotape_get_cartridge_health,
+        .get_tape_alert         = ltotape_get_tape_alert,
+        .clear_tape_alert       = ltotape_clear_tape_alert,
+        .get_xattr              = ltotape_get_xattr,
+        .set_xattr              = ltotape_set_xattr,
+        .get_eod_status         = ltotape_get_eod_status,
+        .get_parameters         = ltotape_get_parameters,
+        .get_device_list        = ltotape_get_device_list,
+        .help_message           = ltotape_help_message,
+        .parse_opts             = ltotape_parse_opts,
+        .default_device_name    = ltotape_default_device_name,
+        .set_key                = ltotape_set_key,
+        .get_keyalias           = ltotape_get_keyalias,
+        .takedump_drive         = ltotape_takedump_drive,
+        .is_mountable           = ltotape_is_mountable,
+        .update_mam_attr        = ltotape_update_mam_attr,
+        .get_worm_status        = ltotape_get_worm_status,
 };
 
 struct tape_ops *tape_dev_get_ops(void)
 {
-	return &ltotape_drive_handler;
+        return &ltotape_drive_handler;
 }
 
 #undef __ltotape_c

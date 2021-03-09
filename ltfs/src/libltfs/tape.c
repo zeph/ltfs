@@ -53,7 +53,7 @@
 **
 *************************************************************************************
 **
-**  (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+**  (C) Copyright 2015 - 2017 Hewlett Packard Enterprise Development LP
 **  07/06/10 Added support for reading and setting a new MAM attribute (EWSTATE) to
 **            track when Early Warning EOM is encountered.  
 **           Added new function to determine whether a format operation may proceed 
@@ -66,6 +66,7 @@
 **            some situations.  Fix provided by Quantum Corporation.
 **  07/09/13 Remove the unload in tape_recover_eod_status, it is unnecessary and 
 **            breaks the recovery process
+**  10/13/17 Added support for SNIA 2.4
 **
 *************************************************************************************
 **
@@ -87,7 +88,7 @@
 #include <ICU/unicode/ustring.h>
 #else
 /* Added to fix Windows compilation */
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 #include <unicode/utf8.h>
 #include <unicode/ustring.h>
 #endif
@@ -375,7 +376,7 @@ int tape_load_tape(struct device_data *dev, void * const kmi_handle)
 	            * Make this a warning instead of an error. We log errors to the
 	            * event log and this just ends up being noise.
 	            */
-	#ifndef HP_mingw_BUILD
+	#ifndef HPE_mingw_BUILD
 				ltfsmsg(LTFS_ERR, "12016E");
 	#else
 				ltfsmsg(LTFS_WARN, "12016E");
@@ -475,13 +476,13 @@ int tape_load_tape(struct device_data *dev, void * const kmi_handle)
 		dev->partition_space[1] = PART_NO_SPACE;
 	}
 
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 	if (ret == EWSTATE_CLEAR) {
 		dev->position.early_warning = false;
 		dev->partition_space[0] = PART_WRITABLE;
 		dev->partition_space[1] = PART_WRITABLE;
 	}
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
 	return 0;
 }
@@ -897,6 +898,31 @@ int tape_logically_read_only(struct device_data *dev)
 	return ret;
 }
 
+/*
+ * Check if a cartridge is locked using the latch
+ * @param vol LTFS volume
+ * @ret 1 for success
+ */
+int tape_get_physically_write_protected(struct device_data *dev) {
+	int ret = 0;
+	struct tc_drive_param param;
+
+	CHECK_ARG_NULL(dev, -LTFS_NULL_ARG);
+	CHECK_ARG_NULL(dev->backend, -LTFS_NULL_ARG);
+
+	ret = dev->backend->get_parameters(dev->backend_data, &param);
+	if (ret < 0) {
+		ltfsmsg(LTFS_ERR, "12034E", ret);
+		return ret;
+	}
+
+	if (param.write_protect) {
+		return 1;
+	}
+
+	return ret;
+}
+
 /**
  * Get read-only state of a device.
  * @param dev the device
@@ -1119,9 +1145,10 @@ int tape_spacefm(struct device_data *dev, int count)
  * @param ignore_nospc Ignore an out of space (early warning) condition? Set when writing Indexes.
  * @return number of bytes written, or a negative value on error.
  */
-ssize_t tape_write(struct device_data *dev, const char *buf, size_t count, bool ignore_less, bool ignore_nospc)
+ssize_t tape_write(struct device_data *dev, const char *buf, size_t count, bool is_index_part, bool ignore_less, bool ignore_nospc)
 {
 	ssize_t ret;
+	struct tc_mam_attr mam_attr;
 
 	CHECK_ARG_NULL(dev, -LTFS_NULL_ARG);
 	CHECK_ARG_NULL(buf, -LTFS_NULL_ARG);
@@ -1153,6 +1180,7 @@ ssize_t tape_write(struct device_data *dev, const char *buf, size_t count, bool 
 		return ret;
 
 	ret = dev->backend->write(dev->backend_data, buf, count, &dev->position);
+	
 	if (ret < 0) {
 		/* If a "real" write error occurs, refuse any additional writes */
 		if (! NEED_REVAL(ret)) {
@@ -1160,6 +1188,37 @@ ssize_t tape_write(struct device_data *dev, const char *buf, size_t count, bool 
 			ltfs_mutex_lock(&dev->read_only_flag_mutex);
 			dev->write_error = true;
 			ltfs_mutex_unlock(&dev->read_only_flag_mutex);
+			
+			// HPE MD 26.09.2017 Changes for SNIA 2.4.
+			// Write errors are now set per partition rather than an overall write error
+			
+			tape_get_MAMattributes(dev, TC_MAM_VOL_LOCK_STATE, (const tape_partition_t) 0, &mam_attr);
+			
+            if (mam_attr.volumelockstate != LOCKED_MAM && mam_attr.volumelockstate != PERMLOCKED_MAM)
+            {
+                if (is_index_part)
+                {
+                    if (mam_attr.volumelockstate != DPPWE_MAM)
+                    {
+                        tape_update_mam_attributes(dev, NULL, TC_MAM_VOL_LOCK_STATE, NULL, IPPWE_MAM);
+                    }
+                    else
+                    {
+                        tape_update_mam_attributes(dev, NULL, TC_MAM_VOL_LOCK_STATE, NULL, DP_IP_PWE_MAM);
+                    }
+                }
+                else
+                {
+                    if (mam_attr.volumelockstate != IPPWE_MAM)
+                    {
+                        tape_update_mam_attributes(dev, NULL, TC_MAM_VOL_LOCK_STATE, NULL, DPPWE_MAM);
+                    }
+                    else
+                    {
+                        tape_update_mam_attributes(dev, NULL, TC_MAM_VOL_LOCK_STATE, NULL, DP_IP_PWE_MAM);
+                    }
+                }
+            }
 		}
 		return ret;
 	} else if (dev->position.early_warning) {
@@ -1368,7 +1427,7 @@ int tape_reset_capacity(struct device_data *dev)
  * @return 0 on success or a negative value on error
  */
 int tape_format(struct device_data *dev, tape_partition_t index_part,
-		const char *vol_name, const char *barcode_name)
+		const char *vol_name, const char *barcode_name, const char *vol_mam_uuid)
 {
 	int ret, pagelen = 0;
 	unsigned char mp_medium_partition[TC_MP_MEDIUM_PARTITION_SIZE+4];
@@ -1410,7 +1469,7 @@ int tape_format(struct device_data *dev, tape_partition_t index_part,
 	mp_medium_partition[1]  = 0x00;
 	mp_medium_partition[19] = 0x01;
 	mp_medium_partition[20] = 0x20 | (mp_medium_partition[20] & 0x1F); /* Set FDP=0, SDP=0, IDP=1 ==> User Setting */
-#if !(defined(HP_BUILD) || defined(GENERIC_OEM_BUILD) || defined(QUANTUM_BUILD))
+#if !(defined(HPE_BUILD) || defined(GENERIC_OEM_BUILD) || defined(QUANTUM_BUILD))
 	mp_medium_partition[22] = 0x00;
 #endif
 	if (index_part == 1) {
@@ -1440,7 +1499,8 @@ int tape_format(struct device_data *dev, tape_partition_t index_part,
 		);
 
 	/* Issue Format Medium (destroy all medium data and make 2-partitition medium) */
-	ret = dev->backend->format(dev->backend_data, TC_FORMAT_DEST_PART, vol_name, barcode_name);
+	ret = dev->backend->format(dev->backend_data, TC_FORMAT_DEST_PART, vol_name, barcode_name,
+			vol_mam_uuid);
 	if (ret < 0) {
 		ltfsmsg(LTFS_ERR, "12053E", ret);
 		return ret;
@@ -1481,7 +1541,7 @@ int tape_unformat(struct device_data *dev)
 	}
 
 	/* Issue Format Medium */
-	ret = dev->backend->format(dev->backend_data, TC_FORMAT_DEFAULT, NULL, NULL);
+	ret = dev->backend->format(dev->backend_data, TC_FORMAT_DEFAULT, NULL, NULL, NULL);
 	if (ret < 0) {
 		ltfsmsg(LTFS_ERR, "12055E", ret);
 		return ret;
@@ -1725,7 +1785,7 @@ int tape_recover_eod_status(struct device_data *dev, void * const kmi_handle)
 		return ret;
 	}
 
-#if (defined HP_BUILD) || (defined QUANTUM_BUILD) || (defined GENERIC_OEM_BUILD)
+#if (defined HPE_BUILD) || (defined QUANTUM_BUILD) || (defined GENERIC_OEM_BUILD)
 	/* The last-reported position may be the unreadable block, so back off by 1 */
 	eod_pos.block--;
 #endif
@@ -1734,8 +1794,8 @@ int tape_recover_eod_status(struct device_data *dev, void * const kmi_handle)
 	INTERRUPTED_RETURN();
 	ltfsmsg(LTFS_INFO, "17131I", eod_pos.partition, eod_pos.block);
 
-	/* HP Change - the unload is unnecessary with our drive and also causes problems */
-#if !(defined(HP_BUILD) || defined(GENERIC_OEM_BUILD) || defined(QUANTUM_BUILD))
+	/* HPE Change - the unload is unnecessary with our drive and also causes problems */
+#if !(defined(HPE_BUILD) || defined(GENERIC_OEM_BUILD) || defined(QUANTUM_BUILD))
 	ret = tape_unload_tape(dev);
 	if (ret < 0) {
 		ltfsmsg(LTFS_ERR, "17133E");
@@ -2189,8 +2249,12 @@ int tape_enable_append_only_mode(struct device_data *dev, bool enable)
 
 	/* If cartridge is loaded and append-only mode is to be disabled,
 	   the cartridge has to be unloaded before sending mode select. */
+
+        /* HPE Change : CR 11358 - we only want to do a PARTIAL unload at this
+           point, so that (a) the cartridge doesn't come out, and (b) we can
+           then reload cleanly.  So use our new API / backend method...       */
 	if (loaded && !enable && (mp_dev_config_ext[21]& 0xF0) == 0x10) {
-		ret = dev->backend->unload(dev->backend_data, &dev->position);
+		ret = dev->backend->loadunload(dev->backend_data, &dev->position, FALSE, TRUE);  /* Load = FALSE, Hold = TRUE */
 		if (ret < 0) {
 			ltfsmsg(LTFS_ERR, "17151E", ret);
 			return ret;
@@ -2225,7 +2289,7 @@ int tape_enable_append_only_mode(struct device_data *dev, bool enable)
 	}
 
 	if (reload) {
-		ret = dev->backend->load(dev->backend_data, &dev->position);
+		ret = dev->backend->loadunload(dev->backend_data, &dev->position, TRUE, FALSE); /* Load = TRUE, Hold = FALSE */
 		if (ret < 0) {
 			ltfsmsg(LTFS_ERR, "17152E", "Reload", ret);
 			return ret;
@@ -3137,7 +3201,7 @@ int tape_check_reformat_ok(struct device_data *dev, bool force)
 
 	ret2 = tape_device_unlock(dev);
 
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 	/* Get rid of variable set but not checked warning */
 	if (ret2 != 0) {}
 #endif
@@ -3263,372 +3327,494 @@ int tape_get_MAMattributes(struct device_data *dev, unsigned int attribute_id, c
 
 	int status = -1, iter = 0, i = 0, ret = 0;
 	char *mam_buf = NULL;
+	char *volumelockstate = NULL;
 
 	switch (attribute_id) {
 
-		case TC_MAM_APPLICATION_VENDOR:
-			/* Get Application Vendor: */
-			mam_buf = (char *) calloc(1, 40);
-			status = dev->backend->read_attribute(dev->backend_data
-												, part
-												, TC_MAM_APPLICATION_VENDOR
-												, (unsigned char *)mam_buf
-												, 20);
-			if (! status) {
-				/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
-				mam_attr->appl_vendor = (char *) calloc(1, (TC_MAM_APPLICATION_VENDOR_LEN + 1));
-				while (iter < TC_MAM_APPLICATION_VENDOR_LEN) {
-					mam_attr->appl_vendor[iter] = mam_buf[iter + 5];
-					iter++;
-				}
-				mam_attr->appl_vendor[iter] = '\0';
-				iter = 0;
-				free(mam_buf);
-				mam_buf = NULL;
-			} else {
-				ltfsmsg(LTFS_WARN, "17302W", "Application Vendor", TC_MAM_APPLICATION_VENDOR);
-				free(mam_buf);
-				mam_buf = NULL;
-				ret = status;
+	case TC_MAM_APPLICATION_VENDOR:
+		/* Get Application Vendor: */
+		mam_buf = (char *) calloc(1, 40);
+		status = dev->backend->read_attribute(dev->backend_data
+				, part
+				, TC_MAM_APPLICATION_VENDOR
+				, (unsigned char *)mam_buf
+				, 20);
+		if (! status) {
+			/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
+			mam_attr->appl_vendor = (char *) calloc(1, (TC_MAM_APPLICATION_VENDOR_LEN + 1));
+			while (iter < TC_MAM_APPLICATION_VENDOR_LEN) {
+				mam_attr->appl_vendor[iter] = mam_buf[iter + 5];
+				iter++;
 			}
-			break;
-
-		case TC_MAM_APPLICATION_NAME:
-			/* Get Application Name: */
-			mam_buf = (char *) calloc(1, 40);
-			status = dev->backend->read_attribute(dev->backend_data
-												, part
-												, TC_MAM_APPLICATION_NAME
-												, (unsigned char *)mam_buf
-												, 40);
-			if (! status) {
-				/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
-				mam_attr->appl_name = (char *) calloc(1, (TC_MAM_APPLICATION_NAME_LEN + 1));
-
-				while (iter < TC_MAM_APPLICATION_NAME_LEN) {
-					mam_attr->appl_name[iter] = mam_buf[iter + 5];
-					iter++;
-				}
-				mam_attr->appl_name[iter] = '\0';
-				iter = 0;
-				free(mam_buf);
-				mam_buf = NULL;
-			} else {
-				ltfsmsg(LTFS_WARN, "17302W", "Application Name", TC_MAM_APPLICATION_NAME);
-				free(mam_buf);
-				mam_buf = NULL;
-				ret = status;
-			}
-			break;
-
-		case TC_MAM_APPLICATION_VERSION:
-				/* Get Application Version: */
-				mam_buf = (char *) calloc(1, 40);
-				status = dev->backend->read_attribute(dev->backend_data
-													, part
-													, TC_MAM_APPLICATION_VERSION
-													, (unsigned char *)mam_buf
-													, 20);
-				if (! status) {
-					/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
-					mam_attr->appl_ver = (char *) calloc(1, (TC_MAM_APPLICATION_VERSION_LEN + 1));
-
-					while (iter < TC_MAM_APPLICATION_VERSION_LEN) {
-						mam_attr->appl_ver[iter] = mam_buf[iter + 5];
-						iter++;
-					}
-					mam_attr->appl_ver[iter] = '\0';
-					iter = 0;
-					free(mam_buf);
-					mam_buf = NULL;
-				} else {
-					ltfsmsg(LTFS_WARN, "17302W", "Application Version", TC_MAM_APPLICATION_VERSION);
-					free(mam_buf);
-					mam_buf = NULL;
-					ret = status;
-				}
-				break;
-
-
-	 case TC_MAM_APP_FORMAT_VERSION:
-		    /* Get Application Format Version (to the value used in the format label, not the index -
-		 		 * though they should be the same at format time):*/
-		    mam_buf = (char *) calloc(1, 40);
-			status = dev->backend->read_attribute(dev->backend_data
-											, part
-											, TC_MAM_APP_FORMAT_VERSION
-											, (unsigned char *)mam_buf
-											, 30);
-
-			if (! status) {
-				/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
-				mam_attr->appl_format_ver = (char *) calloc(1, (TC_MAM_APP_FORMAT_VERSION_LEN + 1));
-
-				while (iter < TC_MAM_APP_FORMAT_VERSION_LEN) {
-					mam_attr->appl_format_ver[iter] = mam_buf[iter + 5];
-					iter++;
-				}
-				mam_attr->appl_format_ver[iter] = '\0';
-				iter = 0;
-				free(mam_buf);
-				mam_buf = NULL;
-			} else {
-				ltfsmsg(LTFS_WARN, "17302W", "Application Format Version", TC_MAM_APP_FORMAT_VERSION);
-				free(mam_buf);
-				mam_buf = NULL;
-				ret = status;
-			}
-		break;
-
-	 case TC_MAM_USR_MED_TXT_LABEL:
-		   /* Get User Medium Text Label */
-		   mam_buf = (char *)calloc(1,(TC_MAM_USR_MED_TXT_LABEL_LEN+TC_MAM_PAGE_HEADER_SIZE));
-	       status = dev->backend->read_attribute(dev->backend_data
-										       , part
-										       , TC_MAM_USR_MED_TXT_LABEL
-										       , (unsigned char *)mam_buf
-										       , (TC_MAM_USR_MED_TXT_LABEL_LEN+TC_MAM_PAGE_HEADER_SIZE));
-
-			if (! status) {
-				/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
-				mam_attr->volume_name = (char *) calloc(1, (TC_MAM_USR_MED_TXT_LABEL_LEN + 1));
-
-				iter = (TC_MAM_USR_MED_TXT_LABEL_LEN+TC_MAM_PAGE_HEADER_SIZE-1);
-
-				while ((i + 5) <= iter) {
-					if (mam_buf[i + 5] == '\0')
-						break;
-					else  {
-						mam_attr->volume_name[i] = mam_buf[i + 5];
-					}
-					i++;
-				}
-
-				mam_attr->volume_name[i] = '\0';
-				iter = 0;
-				i = 0;
-				free(mam_buf);
-				mam_buf = NULL;
-			} else {
-				ltfsmsg(LTFS_WARN, "17302W", "User Medium Text Label", TC_MAM_USR_MED_TXT_LABEL);
-				free(mam_buf);
-				mam_buf = NULL;
-				ret = status;
-				}
-		break;
-
-    case TC_MAM_BARCODE:
-		/* Get Barcode */
-	     mam_buf = (char *)calloc(1,(TC_MAM_BARCODE_LEN+TC_MAM_PAGE_HEADER_SIZE));
-	     status = dev->backend->read_attribute(dev->backend_data
-										     , part
-										     , TC_MAM_BARCODE
-										     , (unsigned char *)mam_buf
-										     , (TC_MAM_BARCODE_LEN+TC_MAM_PAGE_HEADER_SIZE));
-
-			if (! status) {
-				/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
-				mam_attr->barcode = (char *) calloc(1, TC_MAM_BARCODE_LEN + 1);
-
-				while (iter < TC_MAM_BARCODE_LEN) {
-					mam_attr->barcode[iter] = mam_buf[iter + TC_MAM_PAGE_HEADER_SIZE];
-					iter++;
-				}
-
-				iter = 0;
-				free(mam_buf);
-				mam_buf = NULL;
-			} else {
-				ltfsmsg(LTFS_WARN, "17302W", "Barcode", TC_MAM_BARCODE);
-				free(mam_buf);
-				mam_buf = NULL;
-				ret = status;
-				}
-
-				return ret;
-
-		break;
-
-    default:
-			/* Get Application Vendor: */
-			mam_buf = (char *) calloc(1, 40);
-
-			status = dev->backend->read_attribute(dev->backend_data
-												, part
-												, TC_MAM_APPLICATION_VENDOR
-												, (unsigned char *) mam_buf
-												, 20);
-			if (!status) {
-				/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
-				mam_attr->appl_vendor = (char *) calloc(1,
-						(TC_MAM_APPLICATION_VENDOR_LEN + 1));
-				while (iter < TC_MAM_APPLICATION_VENDOR_LEN) {
-					mam_attr->appl_vendor[iter] = mam_buf[iter + 5];
-					iter++;
-				}
-				mam_attr->appl_vendor[iter] = '\0';
-				iter = 0;
-				free(mam_buf);
-				mam_buf = NULL;
-			} else {
-				ltfsmsg(LTFS_WARN, "17302W",
-						"Application Vendor", TC_MAM_APPLICATION_VENDOR);
-				free(mam_buf);
-				mam_buf = NULL;
-				ret = status;
-			}
-
-			/* Get Application Name: */
-			mam_buf = (char *) calloc(1, 40);
-			status = dev->backend->read_attribute(dev->backend_data
-												, part
-												, TC_MAM_APPLICATION_NAME
-												, (unsigned char *) mam_buf
-												, 40);
-			if (!status) {
-				/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
-				mam_attr->appl_name = (char *) calloc(1,
-						(TC_MAM_APPLICATION_NAME_LEN + 1));
-
-				while (iter < TC_MAM_APPLICATION_NAME_LEN) {
-					mam_attr->appl_name[iter] = mam_buf[iter + 5];
-					iter++;
-				}
-				mam_attr->appl_name[iter] = '\0';
-				iter = 0;
-				free(mam_buf);
-				mam_buf = NULL;
-			} else {
-				ltfsmsg(LTFS_WARN, "17302W",
-						"Application Name", TC_MAM_APPLICATION_NAME);
-				free(mam_buf);
-				mam_buf = NULL;
-				ret = status;
-			}
-			/* Get Application Version: */
-			mam_buf = (char *) calloc(1, 40);
-			status = dev->backend->read_attribute(dev->backend_data
-												, part
-												, TC_MAM_APPLICATION_VERSION
-												, (unsigned char *) mam_buf
-												, 20);
-			if (!status) {
-				/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
-				mam_attr->appl_ver = (char *) calloc(1,
-						(TC_MAM_APPLICATION_VERSION_LEN + 1));
-
-				while (iter < TC_MAM_APPLICATION_VERSION_LEN) {
-					mam_attr->appl_ver[iter] = mam_buf[iter + 5];
-					iter++;
-				}
-				mam_attr->appl_ver[iter] = '\0';
-				iter = 0;
-				free(mam_buf);
-				mam_buf = NULL;
-			} else {
-				ltfsmsg(LTFS_WARN, "17302W",
-						"Application Version", TC_MAM_APPLICATION_VERSION);
-				free(mam_buf);
-				mam_buf = NULL;
-				ret = status;
-			}
-			/* Get Application Format Version (to the value used in the format label, not the index -
-			 * though they should be the same at format time):
-			 */
-			mam_buf = (char *) calloc(1, 40);
-			status = dev->backend->read_attribute(dev->backend_data
-												, part
-												, TC_MAM_APP_FORMAT_VERSION
-												, (unsigned char *) mam_buf
-												, 30);
-
-			if (!status) {
-				/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
-				mam_attr->appl_format_ver = (char *) calloc(1,
-						(TC_MAM_APP_FORMAT_VERSION_LEN + 1));
-
-				while (iter < TC_MAM_APP_FORMAT_VERSION_LEN) {
-					mam_attr->appl_format_ver[iter] = mam_buf[iter + 5];
-					iter++;
-				}
-				mam_attr->appl_format_ver[iter] = '\0';
-				iter = 0;
-				free(mam_buf);
-				mam_buf = NULL;
-			} else {
-				ltfsmsg(LTFS_WARN, "17302W",
-						"Application Format Version", TC_MAM_APP_FORMAT_VERSION);
-				free(mam_buf);
-				mam_buf = NULL;
-				ret = status;
-			}
-
-			/* Get User Medium Text Label */
-			mam_buf = (char *) calloc(1,
-					(TC_MAM_USR_MED_TXT_LABEL_LEN + TC_MAM_PAGE_HEADER_SIZE));
-			status = dev->backend->read_attribute(dev->backend_data
-												, part
-												, TC_MAM_USR_MED_TXT_LABEL
-												, (unsigned char *) mam_buf
-												, (TC_MAM_USR_MED_TXT_LABEL_LEN + TC_MAM_PAGE_HEADER_SIZE));
-
-			if (!status) {
-				/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
-				mam_attr->volume_name = (char *) calloc(1,
-						(TC_MAM_USR_MED_TXT_LABEL_LEN + 1));
-
-				iter = (TC_MAM_USR_MED_TXT_LABEL_LEN + TC_MAM_PAGE_HEADER_SIZE - 1);
-
-				while ((i + 5) <= iter) {
-					if (mam_buf[i + 5] == '\0')
-						break;
-					else {
-						mam_attr->volume_name[i] = mam_buf[i + 5];
-					}
-					i++;
-				}
-
-				mam_attr->volume_name[i] = '\0';
-				iter = 0;
-				i = 0;
-				free(mam_buf);
-				mam_buf = NULL;
-			} else {
-				ltfsmsg(LTFS_WARN, "17302W",
-						"User Medium Text Label", TC_MAM_USR_MED_TXT_LABEL);
-				free(mam_buf);
-				mam_buf = NULL;
-				ret = status;
-			}
-
-			/* Get Barcode */
-			mam_buf = (char *) calloc(1,
-					(TC_MAM_BARCODE_LEN + TC_MAM_PAGE_HEADER_SIZE));
-			status = dev->backend->read_attribute(dev->backend_data
-												, part
-												, TC_MAM_BARCODE, (unsigned char *) mam_buf
-												, (TC_MAM_BARCODE_LEN + TC_MAM_PAGE_HEADER_SIZE));
-
-			if (!status) {
-				/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
-				mam_attr->barcode = (char *) calloc(1, TC_MAM_BARCODE_LEN + 1);
-
-				while (iter < TC_MAM_BARCODE_LEN) {
-					mam_attr->barcode[iter] =
-							mam_buf[iter + TC_MAM_PAGE_HEADER_SIZE];
-					iter++;
-				}
-
-				iter = 0;
-				free(mam_buf);
-				mam_buf = NULL;
-			} else {
-				ltfsmsg(LTFS_WARN, "17302W", "Barcode", TC_MAM_BARCODE);
-				free(mam_buf);
-				mam_buf = NULL;
-				ret = status;
-			}
+			mam_attr->appl_vendor[iter] = '\0';
+			iter = 0;
+		} else {
+			ltfsmsg(LTFS_WARN, "17302W", "Application Vendor", TC_MAM_APPLICATION_VENDOR);
+			ret = status;
 		}
+
+		if (mam_buf) {
+			free(mam_buf);
+			mam_buf = NULL;
+		}
+
+		break;
+
+	case TC_MAM_APPLICATION_NAME:
+		/* Get Application Name: */
+		mam_buf = (char *) calloc(1, 40);
+		status = dev->backend->read_attribute(dev->backend_data
+				, part
+				, TC_MAM_APPLICATION_NAME
+				, (unsigned char *)mam_buf
+				, 40);
+		if (! status) {
+			/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
+			mam_attr->appl_name = (char *) calloc(1, (TC_MAM_APPLICATION_NAME_LEN + 1));
+
+			while (iter < TC_MAM_APPLICATION_NAME_LEN) {
+				mam_attr->appl_name[iter] = mam_buf[iter + 5];
+				iter++;
+			}
+			mam_attr->appl_name[iter] = '\0';
+			iter = 0;
+		} else {
+			ltfsmsg(LTFS_WARN, "17302W", "Application Name", TC_MAM_APPLICATION_NAME);
+			ret = status;
+		}
+
+		if (mam_buf) {
+			free(mam_buf);
+			mam_buf = NULL;
+		}
+
+		break;
+
+	case TC_MAM_APPLICATION_VERSION:
+		/* Get Application Version: */
+		mam_buf = (char *) calloc(1, 40);
+		status = dev->backend->read_attribute(dev->backend_data
+				, part
+				, TC_MAM_APPLICATION_VERSION
+				, (unsigned char *)mam_buf
+				, 20);
+		if (! status) {
+			/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
+			mam_attr->appl_ver = (char *) calloc(1, (TC_MAM_APPLICATION_VERSION_LEN + 1));
+
+			while (iter < TC_MAM_APPLICATION_VERSION_LEN) {
+				mam_attr->appl_ver[iter] = mam_buf[iter + 5];
+				iter++;
+			}
+			mam_attr->appl_ver[iter] = '\0';
+			iter = 0;
+		} else {
+			ltfsmsg(LTFS_WARN, "17302W", "Application Version", TC_MAM_APPLICATION_VERSION);
+			ret = status;
+		}
+
+		if (mam_buf) {
+			free(mam_buf);
+			mam_buf = NULL;
+		}
+
+		break;
+
+	case TC_MAM_APP_FORMAT_VERSION:
+		/* Get Application Format Version (to the value used in the format label, not the index -
+		 * though they should be the same at format time):*/
+		mam_buf = (char *) calloc(1, 40);
+		status = dev->backend->read_attribute(dev->backend_data
+				, part
+				, TC_MAM_APP_FORMAT_VERSION
+				, (unsigned char *)mam_buf
+				, 30);
+
+		if (! status) {
+			/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
+			mam_attr->appl_format_ver = (char *) calloc(1, (TC_MAM_APP_FORMAT_VERSION_LEN + 1));
+
+			while (iter < TC_MAM_APP_FORMAT_VERSION_LEN) {
+				mam_attr->appl_format_ver[iter] = mam_buf[iter + 5];
+				iter++;
+			}
+			mam_attr->appl_format_ver[iter] = '\0';
+			iter = 0;
+		} else {
+			ltfsmsg(LTFS_WARN, "17302W", "Application Format Version", TC_MAM_APP_FORMAT_VERSION);
+			ret = status;
+		}
+
+		if (mam_buf) {
+			free(mam_buf);
+			mam_buf = NULL;
+		}
+
+		break;
+
+	case TC_MAM_USR_MED_TXT_LABEL:
+		/* Get User Medium Text Label */
+		mam_buf = (char *)calloc(1,(TC_MAM_USR_MED_TXT_LABEL_LEN+TC_MAM_PAGE_HEADER_SIZE));
+		status = dev->backend->read_attribute(dev->backend_data
+				, part
+				, TC_MAM_USR_MED_TXT_LABEL
+				, (unsigned char *)mam_buf
+				, (TC_MAM_USR_MED_TXT_LABEL_LEN+TC_MAM_PAGE_HEADER_SIZE));
+
+		if (! status) {
+			/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
+			mam_attr->volume_name = (char *) calloc(1, (TC_MAM_USR_MED_TXT_LABEL_LEN + 1));
+
+			iter = (TC_MAM_USR_MED_TXT_LABEL_LEN+TC_MAM_PAGE_HEADER_SIZE-1);
+
+			while ((i + 5) <= iter) {
+				if (mam_buf[i + 5] == '\0')
+					break;
+				else  {
+					mam_attr->volume_name[i] = mam_buf[i + 5];
+				}
+				i++;
+			}
+
+			mam_attr->volume_name[i] = '\0';
+			iter = 0;
+			i = 0;
+		} else {
+			ltfsmsg(LTFS_WARN, "17302W", "User Medium Text Label", TC_MAM_USR_MED_TXT_LABEL);
+			ret = status;
+		}
+
+		if (mam_buf) {
+			free(mam_buf);
+			mam_buf = NULL;
+		}
+
+		break;
+
+	case TC_MAM_BARCODE:
+		/* Get Barcode */
+		mam_buf = (char *) calloc(1,(TC_MAM_BARCODE_LEN+TC_MAM_PAGE_HEADER_SIZE));
+		status = dev->backend->read_attribute(dev->backend_data
+				, part
+				, TC_MAM_BARCODE
+				, (unsigned char *)mam_buf
+				, (TC_MAM_BARCODE_LEN+TC_MAM_PAGE_HEADER_SIZE));
+
+		if (! status) {
+			/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
+			mam_attr->barcode = (char *) calloc(1, TC_MAM_BARCODE_LEN + 1);
+
+			while (iter < TC_MAM_BARCODE_LEN) {
+				mam_attr->barcode[iter] = mam_buf[iter + TC_MAM_PAGE_HEADER_SIZE];
+				iter++;
+			}
+
+			iter = 0;
+		} else {
+			ltfsmsg(LTFS_WARN, "17302W", "Barcode", TC_MAM_BARCODE);
+			ret = status;
+		}
+
+		if (mam_buf) {
+			free(mam_buf);
+			mam_buf = NULL;
+		}
+
+		break;
+
+	case TC_MAM_VOL_LOCK_STATE:
+		/* Get Volume Lock State */
+		mam_attr->volumelockstate = NOLOCK_MAM;
+		mam_buf = (char *) calloc(1,(TC_MAM_VOL_LOCK_STATE_LEN+TC_MAM_PAGE_HEADER_SIZE));
+		status = dev->backend->read_attribute(dev->backend_data
+				, part
+				, TC_MAM_VOL_LOCK_STATE
+				, (unsigned char *)mam_buf
+				, (TC_MAM_VOL_LOCK_STATE_LEN+TC_MAM_PAGE_HEADER_SIZE));
+
+		if (! status) {
+			/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
+			volumelockstate = (char *) calloc(1, TC_MAM_VOL_LOCK_STATE_LEN + 1);
+
+			while (iter < TC_MAM_VOL_LOCK_STATE_LEN) {
+				volumelockstate[iter] = mam_buf[iter + TC_MAM_PAGE_HEADER_SIZE];
+				iter++;
+			}
+
+         // HPE MD 26.09.2017 Changes for SNIA 2.4. Added DPPWE, IPPWE, DP_IP_PWE
+			if (volumelockstate[0] == 0) {
+				mam_attr->volumelockstate = UNLOCKED_MAM;
+			} else if (volumelockstate[0] == 1) {
+				mam_attr->volumelockstate = LOCKED_MAM;
+			} else if (volumelockstate[0] == 2) {
+				mam_attr->volumelockstate = PWE_MAM;
+			} else if (volumelockstate[0] == 3) {
+				mam_attr->volumelockstate = PERMLOCKED_MAM;
+			}else if (volumelockstate[0] == 4) {
+				mam_attr->volumelockstate = DPPWE_MAM;
+			}else if (volumelockstate[0] == 5) {
+				mam_attr->volumelockstate = IPPWE_MAM;
+			}else if (volumelockstate[0] == 6) {
+				mam_attr->volumelockstate = DP_IP_PWE_MAM;
+			}
+
+			iter = 0;
+		} else {
+			ltfsmsg(LTFS_WARN, "17302W", "volumeLockState", TC_MAM_VOL_LOCK_STATE);
+			ret = status;
+		}
+
+		if (volumelockstate) {
+			free (volumelockstate);
+			volumelockstate = NULL;
+		}
+
+		if (mam_buf) {
+			free(mam_buf);
+			mam_buf = NULL;
+		}
+
+		break;
+
+	default:
+		/* Get Application Vendor: */
+		mam_buf = (char *) calloc(1, 40);
+
+		status = dev->backend->read_attribute(dev->backend_data
+				, part
+				, TC_MAM_APPLICATION_VENDOR
+				, (unsigned char *) mam_buf
+				, 20);
+		if (!status) {
+			/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
+			mam_attr->appl_vendor = (char *) calloc(1,
+					(TC_MAM_APPLICATION_VENDOR_LEN + 1));
+			while (iter < TC_MAM_APPLICATION_VENDOR_LEN) {
+				mam_attr->appl_vendor[iter] = mam_buf[iter + 5];
+				iter++;
+			}
+			mam_attr->appl_vendor[iter] = '\0';
+			iter = 0;
+		} else {
+			ltfsmsg(LTFS_WARN, "17302W",
+					"Application Vendor", TC_MAM_APPLICATION_VENDOR);
+			ret = status;
+		}
+
+		if (mam_buf) {
+			free(mam_buf);
+			mam_buf = NULL;
+		}
+
+		/* Get Application Name: */
+		mam_buf = (char *) calloc(1, 40);
+		status = dev->backend->read_attribute(dev->backend_data
+				, part
+				, TC_MAM_APPLICATION_NAME
+				, (unsigned char *) mam_buf
+				, 40);
+		if (!status) {
+			/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
+			mam_attr->appl_name = (char *) calloc(1,
+					(TC_MAM_APPLICATION_NAME_LEN + 1));
+
+			while (iter < TC_MAM_APPLICATION_NAME_LEN) {
+				mam_attr->appl_name[iter] = mam_buf[iter + 5];
+				iter++;
+			}
+			mam_attr->appl_name[iter] = '\0';
+			iter = 0;
+		} else {
+			ltfsmsg(LTFS_WARN, "17302W",
+					"Application Name", TC_MAM_APPLICATION_NAME);
+			ret = status;
+		}
+
+		if (mam_buf) {
+			free(mam_buf);
+			mam_buf = NULL;
+		}
+
+		/* Get Application Version: */
+		mam_buf = (char *) calloc(1, 40);
+		status = dev->backend->read_attribute(dev->backend_data
+				, part
+				, TC_MAM_APPLICATION_VERSION
+				, (unsigned char *) mam_buf
+				, 20);
+		if (!status) {
+			/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
+			mam_attr->appl_ver = (char *) calloc(1, (TC_MAM_APPLICATION_VERSION_LEN + 1));
+
+			while (iter < TC_MAM_APPLICATION_VERSION_LEN) {
+				mam_attr->appl_ver[iter] = mam_buf[iter + 5];
+				iter++;
+			}
+			mam_attr->appl_ver[iter] = '\0';
+			iter = 0;
+		} else {
+			ltfsmsg(LTFS_WARN, "17302W",
+					"Application Version", TC_MAM_APPLICATION_VERSION);
+			ret = status;
+		}
+
+		if (mam_buf) {
+			free(mam_buf);
+			mam_buf = NULL;
+		}
+
+		/* Get Application Format Version (to the value used in the format label, not the index -
+		 * though they should be the same at format time):
+		 */
+		mam_buf = (char *) calloc(1, 40);
+		status = dev->backend->read_attribute(dev->backend_data
+				, part
+				, TC_MAM_APP_FORMAT_VERSION
+				, (unsigned char *) mam_buf
+				, 30);
+
+		if (!status) {
+			/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
+			mam_attr->appl_format_ver = (char *) calloc(1,
+					(TC_MAM_APP_FORMAT_VERSION_LEN + 1));
+
+			while (iter < TC_MAM_APP_FORMAT_VERSION_LEN) {
+				mam_attr->appl_format_ver[iter] = mam_buf[iter + 5];
+				iter++;
+			}
+			mam_attr->appl_format_ver[iter] = '\0';
+			iter = 0;
+		} else {
+			ltfsmsg(LTFS_WARN, "17302W",
+					"Application Format Version", TC_MAM_APP_FORMAT_VERSION);
+			ret = status;
+		}
+
+		if (mam_buf) {
+			free(mam_buf);
+			mam_buf = NULL;
+		}
+
+		/* Get User Medium Text Label */
+		mam_buf = (char *) calloc(1, (TC_MAM_USR_MED_TXT_LABEL_LEN + TC_MAM_PAGE_HEADER_SIZE));
+		status = dev->backend->read_attribute(dev->backend_data
+				, part
+				, TC_MAM_USR_MED_TXT_LABEL
+				, (unsigned char *) mam_buf
+				, (TC_MAM_USR_MED_TXT_LABEL_LEN + TC_MAM_PAGE_HEADER_SIZE));
+
+		if (!status) {
+			/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
+			mam_attr->volume_name = (char *) calloc(1,
+					(TC_MAM_USR_MED_TXT_LABEL_LEN + 1));
+
+			iter = (TC_MAM_USR_MED_TXT_LABEL_LEN + TC_MAM_PAGE_HEADER_SIZE - 1);
+
+			while ((i + 5) <= iter) {
+				if (mam_buf[i + 5] == '\0')
+					break;
+				else {
+					mam_attr->volume_name[i] = mam_buf[i + 5];
+				}
+				i++;
+			}
+
+			mam_attr->volume_name[i] = '\0';
+			iter = 0;
+			i = 0;
+		} else {
+			ltfsmsg(LTFS_WARN, "17302W",
+					"User Medium Text Label", TC_MAM_USR_MED_TXT_LABEL);
+			ret = status;
+		}
+
+		if (mam_buf) {
+			free(mam_buf);
+			mam_buf = NULL;
+		}
+
+		/* Get Barcode */
+		mam_buf = (char *) calloc(1, (TC_MAM_BARCODE_LEN + TC_MAM_PAGE_HEADER_SIZE));
+		status = dev->backend->read_attribute(dev->backend_data
+				, part
+				, TC_MAM_BARCODE, (unsigned char *) mam_buf
+				, (TC_MAM_BARCODE_LEN + TC_MAM_PAGE_HEADER_SIZE));
+
+		if (!status) {
+			/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
+			mam_attr->barcode = (char *) calloc(1, TC_MAM_BARCODE_LEN + 1);
+
+			while (iter < TC_MAM_BARCODE_LEN) {
+				mam_attr->barcode[iter] =
+						mam_buf[iter + TC_MAM_PAGE_HEADER_SIZE];
+				iter++;
+			}
+
+			iter = 0;
+		} else {
+			ltfsmsg(LTFS_WARN, "17302W", "Barcode", TC_MAM_BARCODE);
+			ret = status;
+		}
+
+		if (mam_buf) {
+			free(mam_buf);
+			mam_buf = NULL;
+		}
+
+		/* Get Volume Lock State */
+		mam_attr->volumelockstate = NOLOCK_MAM;
+
+		mam_buf = (char *) calloc(1, (TC_MAM_VOL_LOCK_STATE_LEN + TC_MAM_PAGE_HEADER_SIZE));
+		status = dev->backend->read_attribute(dev->backend_data
+				, part
+				, TC_MAM_VOL_LOCK_STATE, (unsigned char *) mam_buf
+				, (TC_MAM_VOL_LOCK_STATE_LEN + TC_MAM_PAGE_HEADER_SIZE));
+
+		if (!status) {
+			/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
+			volumelockstate = (char *) calloc(1, TC_MAM_VOL_LOCK_STATE_LEN + 1);
+
+			while (iter < TC_MAM_VOL_LOCK_STATE_LEN) {
+				volumelockstate[iter] =
+						mam_buf[iter + TC_MAM_PAGE_HEADER_SIZE];
+				iter++;
+			}
+
+         // HPE MD 26.09.2017 Changes for SNIA 2.4. Added DPPWE, IPPWE, DP_IP_PWE
+			if (volumelockstate[0] == 0) {
+				mam_attr->volumelockstate = UNLOCKED_MAM;
+			} else if (volumelockstate[0] == 1) {
+				mam_attr->volumelockstate = LOCKED_MAM;
+			} else if (volumelockstate[0] == 2) {
+				mam_attr->volumelockstate = PWE_MAM;
+			} else if (volumelockstate[0] == 3) {
+				mam_attr->volumelockstate = PERMLOCKED_MAM;
+			}else if (volumelockstate[0] == 4) {
+				mam_attr->volumelockstate = DPPWE_MAM;
+			}else if (volumelockstate[0] == 5) {
+				mam_attr->volumelockstate = IPPWE_MAM;
+			}else if (volumelockstate[0] == 6) {
+				mam_attr->volumelockstate = DP_IP_PWE_MAM;
+			}
+
+			iter = 0;
+		} else {
+			ltfsmsg(LTFS_WARN, "17302W", "volumelockstate", TC_MAM_VOL_LOCK_STATE);
+			ret = status;
+		}
+
+		if (mam_buf) {
+			free(mam_buf);
+			mam_buf = NULL;
+		}
+
+		if (volumelockstate) {
+			free(volumelockstate);
+			volumelockstate = NULL;
+		}
+		break;
+
+	}
 	return ret;
 }
 /**
@@ -3638,15 +3824,125 @@ int tape_get_MAMattributes(struct device_data *dev, unsigned int attribute_id, c
  * @return 0 on success, a negative value on error.
  */
 int tape_update_mam_attributes(struct device_data *device,
-		const char *usr_def_vol_name, unsigned int attribute_id, const char *usr_def_barcode) {
+							   const char *usr_def_vol_name,
+							   unsigned int attribute_id,
+							   const char *usr_def_barcode,
+							   mam_lockval lockbit) {
 	int status = -1;
 
 	CHECK_ARG_NULL(device, -LTFS_NULL_ARG);
 
 	status = device->backend->update_mam_attr(device->backend_data,
-			TC_FORMAT_DEST_PART, usr_def_vol_name, attribute_id, usr_def_barcode);
+											  TC_FORMAT_DEST_PART,
+											  usr_def_vol_name,
+											  attribute_id,
+											  usr_def_barcode,
+											  lockbit);
 
 	return status;
+}
+
+/**
+ * Get tape's MAM attributes for Volume Advisory Locking and Archive Manager to use with utilities.
+ * @param dev Device from which the attributes have to be retrieved.
+ * @param part The partition of tape.
+ * @quiet do not print messages if utilities are running in quiet mode.
+ * @param mam_attr Attributes read will be stored here.
+ * @return 0 on success or a negative value on error.
+ */
+int tape_get_MAM_AMVALattributes(struct device_data *dev, const tape_partition_t part, bool quiet,
+		struct tc_mam_attr *mam_attr) {
+
+	int status = -1, iter = 0, ret = 0;
+	char *mam_buf = NULL;
+	char *volumelockstate = NULL;
+
+	/* Get Volume Lock State */
+	mam_attr->volumelockstate = NOLOCK_MAM;
+
+	mam_buf = (char *) calloc(1, (TC_MAM_VOL_LOCK_STATE_LEN + TC_MAM_PAGE_HEADER_SIZE));
+	status = dev->backend->read_attribute(dev->backend_data
+			, part
+			, TC_MAM_VOL_LOCK_STATE, (unsigned char *) mam_buf
+			, (TC_MAM_VOL_LOCK_STATE_LEN + TC_MAM_PAGE_HEADER_SIZE));
+
+	if (!status) {
+		/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
+		volumelockstate = (char *) calloc(1, TC_MAM_VOL_LOCK_STATE_LEN + 1);
+
+		while (iter < TC_MAM_VOL_LOCK_STATE_LEN) {
+			volumelockstate[iter] =
+					mam_buf[iter + TC_MAM_PAGE_HEADER_SIZE];
+			iter++;
+		}
+
+      // HPE MD 26.09.2017 Changes for SNIA 2.4. Added DPPWE, IPPWE, DP_IP_PWE
+		if (volumelockstate[0] == 0) {
+			mam_attr->volumelockstate = UNLOCKED_MAM;
+		} else if (volumelockstate[0] == 1) {
+			mam_attr->volumelockstate = LOCKED_MAM;
+		} else if (volumelockstate[0] == 2) {
+			mam_attr->volumelockstate = PWE_MAM;
+		} else if (volumelockstate[0] == 3) {
+			mam_attr->volumelockstate = PERMLOCKED_MAM;
+		}else if (volumelockstate[0] == 4) {
+			mam_attr->volumelockstate = DPPWE_MAM;
+		}else if (volumelockstate[0] == 5) {
+			mam_attr->volumelockstate = IPPWE_MAM;
+		}else if (volumelockstate[0] == 6) {
+			mam_attr->volumelockstate = DP_IP_PWE_MAM;
+		}
+
+		iter = 0;
+	} else {
+		if (!quiet) {
+			ltfsmsg(LTFS_WARN, "17302W", "volumelockstate", TC_MAM_VOL_LOCK_STATE);
+		}
+		ret = status;
+	}
+
+	if (mam_buf) {
+		free(mam_buf);
+		mam_buf = NULL;
+	}
+
+	if (volumelockstate) {
+		free(volumelockstate);
+		volumelockstate = NULL;
+	}
+
+	/* Get Application Vendor: */
+	mam_buf = (char *) calloc(1, 40);
+
+	status = dev->backend->read_attribute(dev->backend_data
+			, part
+			, TC_MAM_APPLICATION_VENDOR
+			, (unsigned char *) mam_buf
+			, 20);
+	if (!status) {
+		/* The first 5 bytes of MAM buffer contains attribute header so extracting from 5th byte */
+		mam_attr->appl_vendor = (char *) calloc(1,
+				(TC_MAM_APPLICATION_VENDOR_LEN + 1));
+		while (iter < TC_MAM_APPLICATION_VENDOR_LEN) {
+			mam_attr->appl_vendor[iter] = mam_buf[iter + 5];
+			iter++;
+		}
+		mam_attr->appl_vendor[iter] = '\0';
+		iter = 0;
+	} else {
+		if (!quiet) {
+			ltfsmsg(LTFS_WARN, "17302W",
+					"Application Vendor", TC_MAM_APPLICATION_VENDOR);
+		}
+		ret = status;
+	}
+
+	if (mam_buf) {
+		free(mam_buf);
+		mam_buf = NULL;
+	}
+
+	return ret;
 }
 
 /* End of file */

@@ -45,6 +45,11 @@
 **
 *************************************************************************************
 **
+**  (C) Copyright 2015 - 2017 Hewlett Packard Enterprise Development LP
+**  10/13/17 Added support for SNIA 2.4
+**
+*************************************************************************************
+**
 ** Copyright (C) 2012 OSR Open Systems Resources, Inc.
 ** 
 ************************************************************************************* 
@@ -71,7 +76,7 @@
  * defined. Strange, yes, but true 
  *  
  */
-#if defined(HP_mingw_BUILD) && defined(__MINGW32__)
+#if defined(HPE_mingw_BUILD) && defined(__MINGW32__)
 
 #undef __MINGW32__
 #include <unicode/uchar.h>
@@ -83,7 +88,7 @@
 #include <unicode/uchar.h>
 #include <unicode/ustring.h>
 #include <unicode/utypes.h>
-#endif /* #if defined(HP_mingw_BUILD) && defined(__MINGW32__) */
+#endif /* #if defined(HPE_mingw_BUILD) && defined(__MINGW32__) */
 
 #include <unicode/ucnv.h>
 #include <unicode/unorm.h>
@@ -96,6 +101,7 @@
 int _pathname_is_utf8(const char *name, size_t size);
 int _pathname_validate(const char *name, bool allow_slash);
 int _pathname_valid_in_xml(UChar32 c);
+int _pathname_valid_in_xml_for_xattrvalue(UChar32 c);
 int _pathname_format_icu(const char *src, char **dest, bool validate, bool allow_slash);
 int _pathname_check_utf8_icu(const char *src, size_t size);
 int _pathname_foldcase_utf8_icu(const char *src, char **dest);
@@ -260,7 +266,8 @@ int pathname_normalize(const char *name, char **new_name)
  * Validate a file name.
  * @return 0 on success or a negative value on error.
  */
-int pathname_validate_file(const char *name)
+// HPE MD 22.09.2017 Change made to function to allow larger names when percent encoded.
+int pathname_validate_file(const char *name, int percentencoded)
 {
 	int namelen, ret;
 
@@ -269,7 +276,7 @@ int pathname_validate_file(const char *name)
 	namelen = pathname_strlen(name);
 	if (namelen < 0)
 		return namelen;
-	if (namelen > LTFS_FILENAME_MAX) {
+	if (namelen > ( LTFS_FILENAME_MAX + ( 2 * LTFS_FILENAME_MAX * percentencoded ) ) ) {
 		return -LTFS_NAMETOOLONG;
 	}
 	ret = _pathname_validate(name, false);
@@ -281,11 +288,24 @@ int pathname_validate_file(const char *name)
  * directory names. Additionally, "ltfs*" names are not valid unless they are recognized by
  * this implementation.
  * @param name Name to validate.
+ * HPE MD 21.09.2017 SNIA 2.4 allows / to be used in xattr names and as such no longer conform to
+ * the same constraints as file and directory names.
  */
-int pathname_validate_xattr_name(const char *name)
+int pathname_validate_xattr_name(const char *name, int percentencoded)
 {
-	/* TODO: reject all "ltfs*" names except those explicitly recognized. */
-	return pathname_validate_file(name);
+    int namelen, ret;
+
+    CHECK_ARG_NULL(name, -LTFS_NULL_ARG);
+
+    namelen = pathname_strlen(name);
+    if (namelen < 0)
+        return namelen;
+    if (namelen > ( LTFS_FILENAME_MAX + ( 2 * LTFS_FILENAME_MAX * percentencoded ) ) ) {
+        return -LTFS_NAMETOOLONG;
+    }
+
+    ret = _pathname_validate(name, true);
+    return ret;
 }
 
 /**
@@ -318,7 +338,7 @@ int pathname_validate_xattr_value(const char *name, size_t size)
 			return -LTFS_ICU_ERROR;
 		}
 
-		if (_pathname_valid_in_xml(c) == 0)
+		if (_pathname_valid_in_xml_for_xattrvalue(c) == 0)
 			return 1;
 	}
 
@@ -419,8 +439,8 @@ int _pathname_validate(const char *name, bool allow_slash)
 			ltfsmsg(LTFS_ERR, "11235E");
 			return -LTFS_ICU_ERROR;
 		}
-
-		if (_pathname_valid_in_xml(c) == 0 || c == ':' || (! allow_slash && c == '/'))
+      // HPE MD Removed checking of : as percent encoding should now handle it
+		if (_pathname_valid_in_xml(c) == 0 || (! allow_slash && c == '/'))
 			return -LTFS_INVALID_PATH;
 	}
 
@@ -434,11 +454,29 @@ int _pathname_validate(const char *name, bool allow_slash)
  */
 int _pathname_valid_in_xml(UChar32 c)
 {
-	if ((c >= 0 && c <= 0x1f && c != 0x09 && c != 0x0a && c != 0x0d) ||
-		(c >= 0xd800 && c <= 0xdfff) || c == 0xfffe || c == 0xffff)
+	// HPE MD 22.09.2017 Removed character checking for characters that will be percent encoded.
+	if ( (c >= 0xd800 && c <= 0xdfff) || c == 0xfffe || c == 0xffff  || c == 0)
 		return 0;
 	else
 		return 1;
+}
+
+/**
+ * Determine whether a given Unicode code point is valid in XML for an
+ *  extended attribute value.  Diverged from preceding function because
+ *  EA values are encoded using base64 rather than percent encoding used
+ *  for EA names (and for directory & file names).  HPE 09-Aug-18
+ * @param c Code point to check.
+ * @return 1 if valid or 0 if not (i.e. needs base64 encoding).
+ */
+int _pathname_valid_in_xml_for_xattrvalue (UChar32 c)
+{
+	if ((c >= 0 && c <= 0x1f && c != 0x09 && c != 0x0a && c != 0x0d) ||
+	    (c >= 0xd800 && c <= 0xdfff) || c == 0xfffe || c == 0xffff) {
+		return 0;
+	} else {
+		return 1;
+	}
 }
 
 /**
@@ -808,7 +846,7 @@ int _pathname_system_to_utf16_icu(const char *src, UChar **dest)
 	UConverter *syslocale;
 	int32_t destlen;
 
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 	/* open converter for the system locale */
 	syslocale = ucnv_open(NULL, &err);
 	if (U_FAILURE(err)) {
@@ -821,7 +859,7 @@ int _pathname_system_to_utf16_icu(const char *src, UChar **dest)
 		ltfsmsg(LTFS_ERR, "11246E", err);
 		return -LTFS_ICU_ERROR;
 	}
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
 	ucnv_setToUCallBack(syslocale, UCNV_TO_U_CALLBACK_STOP, NULL, NULL, NULL, &err);
 	if (U_FAILURE(err)) {
@@ -872,12 +910,12 @@ int _pathname_utf8_to_system_icu(const char *src, char **dest)
 	UErrorCode err = U_ZERO_ERROR;
 	int32_t destlen;
 
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 	/* If current locale is UTF-8, no conversion needed */
 	syslocale = ucnv_getDefaultName();
 #else
 	syslocale = "UTF-8";
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 	if (! strcmp(syslocale, "UTF-8")) {
 		*dest = strdup(src);
 		if (! *dest)

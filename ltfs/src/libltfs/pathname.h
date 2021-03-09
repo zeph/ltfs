@@ -45,6 +45,11 @@
 **
 *************************************************************************************
 **
+**  (C) Copyright 2015 - 2017 Hewlett Packard Enterprise Development LP
+**  10/13/17 Added support for SNIA 2.4
+**
+*************************************************************************************
+**
 ** Copyright (C) 2012 OSR Open Systems Resources, Inc.
 ** 
 ************************************************************************************* 
@@ -76,7 +81,7 @@ extern "C" {
  * defined. Strange, yes, but true 
  *  
  */
-#if defined(HP_mingw_BUILD) && defined(__MINGW32__)
+#if defined(HPE_mingw_BUILD) && defined(__MINGW32__)
 
 #undef __MINGW32__
 #include <unicode/utypes.h>
@@ -84,7 +89,7 @@ extern "C" {
 
 #else 
 #include <unicode/utypes.h>
-#endif /* #if defined(HP_mingw_BUILD) && defined(__MINGW32__) */
+#endif /* #if defined(HPE_mingw_BUILD) && defined(__MINGW32__) */
 
 
 #endif
@@ -94,8 +99,9 @@ int pathname_unformat(const char *name, char **new_name);
 int pathname_caseless_match(const char *name1, const char *name2, int *result);
 int pathname_prepare_caseless(const char *name, UChar **new_name, bool use_nfc);
 int pathname_normalize(const char *name, char **new_name);
-int pathname_validate_file(const char *name);
-int pathname_validate_xattr_name(const char *name);
+// HPE MD 22.09.2017 next two functions changed to incorporate SNIA 2.4
+int pathname_validate_file(const char *name, int percentencoded);
+int pathname_validate_xattr_name(const char *name, int percentencoded);
 int pathname_validate_xattr_value(const char *name, size_t size);
 int pathname_strlen(const char *name);
 int pathname_truncate(char *name, size_t size);

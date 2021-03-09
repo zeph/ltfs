@@ -58,15 +58,15 @@
 extern "C" {
 #endif
 
-/* HP: We don't have access to this file. */
-#if defined(mingw_PLATFORM) && !defined(HP_mingw_BUILD)
+/* HPE: We don't have access to this file. */
+#if defined(mingw_PLATFORM) && !defined(HPE_mingw_BUILD)
 static inline void backtrace_info(void)
 {
 	return;
 }
 
 #include "arch/win/win_locking.h"
-#elif defined(HP_mingw_BUILD)
+#elif defined(HPE_mingw_BUILD)
 /* Do nothing */
 #else
 #include <execinfo.h> /* For backtrace() */

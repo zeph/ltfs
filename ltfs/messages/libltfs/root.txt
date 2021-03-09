@@ -28,8 +28,11 @@
 //  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 //  or download the license from <http://www.gnu.org/licenses/>.
 //
-//
 //  ZZ_Copyright_END
+//
+//  (C) Copyright 2015-2017 Hewlett Packard Enterprise Development LP
+//
+//  10/13/2017 Added extra messages to support SNIA 2.4
 //
 
 root:table {
@@ -561,7 +564,7 @@ root:table {
 		17028E:string { "XML parser: base64 decoding failed" }
 		17029E:string { "XML parser: invalid UUID %s" }
 		17030E:string { "XML parser: failed to normalize name \'%s\'" }
-		17031E:string { "XML parser: invalid name \'%s\'" }
+		17031E:string { "XML parser: invalid %s name \'%s\'" }
 		17032E:string { "XML parser: compression must be \'true\' (1) or \'false\' (0)" }
 		17033E:string { "XML parser: invalid partition \'%s\'" }
 		17034E:string { "XML parser: invalid time \'%s\' (%d)" }
@@ -773,7 +776,41 @@ root:table {
 		17302W:string { "Cannot retrieve attribute (%s=0x%x)" }
 		17303E:string { "Barcode must be atleast 6 and atmost 32 alphanumeric ascii characters" }
 		17304E:string { "Barcode can contain only digits and upper case characters" }
-
+		17305I:string { "The ltfs volume is locked and needs to be unlocked for Read-Write operations" }
+		17306I:string { "Mounting as read-only because the volume is locked due to a hard write error" }
+		17307I:string { "The ltfs volume is permanently locked and so is mounted read-only.  Reformat required for write operations"}
+		17308I:string { "The ltfs volume is locked due to write error. Run check utility to fix or reformat the cartridge"}
+		17309I:string { "The ltfs volume is permanently locked. Run format utility to re-use the cartridge"}
+		17310I:string { "Setting the LTFS Volume to be unlocked" }
+		17311E:string { "The LTFS Volume cannot be unlocked (%u)" }
+		17312I:string { "Setting the LTFS Volume to be locked" }
+		17313E:string { "The LTFS Volume cannot be locked (%u)" }
+		17314I:string { "Setting the LTFS Volume to be permanently locked" }
+		17315E:string { "The LTFS Volume cannot be permanently locked (%u)" }
+		17316I:string { "Setting the LTFS Volume to be locked due to write error" }
+		17317E:string { "The LTFS Volume cannot be locked due to write error (%u)" }
+		17318E:string { "Only 0->Unlocking, 1->Locking and 2->Permanent Locking are allowed" }
+		17319I:string { "%s" }
+		17320I:string  { "Mounting as read-only with the latest index (%d) as permanent write error is set in MAM" }
 		
+		//MD 22.09.2017 Added for SNIA 2.4 to allow for checking percent encoding and openforwrite
+		17321D:string { "Original name from platform? %s" }
+		17322D:string { "percent encoded name? %s" }
+		17323D:string { "Original name from tape? %s" }
+		17324D:string { "percent decoded filename? %s" }
+		17325D:string { "Generic string tracepoint %d, %s"}
+		17326D:string { "Generic number tracepoint %d, %d"}
+		17327I:string { "The ltfs volume is locked due to data partition write error. Run check utility to fix or reformat the cartridge"}
+		17328I:string { "The ltfs volume is locked due to index partition write error. Run check utility to fix or reformat the cartridge"}
+		17329I:string { "Setting the LTFS Volume to be locked due to data partition write error" }
+		17330I:string { "Setting the LTFS Volume to be locked due to index partition write error" }
+		17331E:string { "The LTFS Volume cannot be locked due to data partition write error (%u)" }
+		17332E:string { "The LTFS Volume cannot be locked due to index partition write error (%u)" }
+		17333I:string { "Mounting as read-only because the volume is locked due to a data partition hard write error" }
+		17334I:string { "Mounting as read-only because the volume is locked due to a index partition hard write error" }
+		17335I:string { "Mounting as read-only because the volume is locked due to both partition hard write error" }
+		17336I:string { "Percent encoded name has been truncated" }
+		
+		17351I:string { "Volume belongs to Archive Manager spanned set, mounting as read only" }
 	}
 }

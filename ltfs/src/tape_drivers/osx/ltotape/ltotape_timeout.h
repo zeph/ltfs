@@ -6,7 +6,7 @@
 **
 ** CONTENTS:        Timeout values for LTO and DAT drives
 **
-** (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+** (C) Copyright 2015-2017 Hewlett Packard Enterprise Development LP
 **
 ** This program is free software; you can redistribute it and/or modify it
 **  under the terms of version 2.1 of the GNU Lesser General Public License
@@ -36,31 +36,31 @@
  *  measured in milliseconds
  */
 #define LTO_DEFAULT_TIMEOUT            60000  
-#define LTO_ERASE_TIMEOUT             300000  /* NB for SHORT ERASE only */ 
+#define LTO_ERASE_TIMEOUT            1560000  /* NB for SHORT ERASE only */ 
 #define LTO_INQUIRY_TIMEOUT            60000
-#define LTO_LOAD_TIMEOUT              600000
-#define LTO_LOCATE_TIMEOUT           1200000      
+#define LTO_LOAD_TIMEOUT              840000
+#define LTO_LOCATE_TIMEOUT           2940000      
 #define LTO_LOGSELECT_TIMEOUT          60000
 #define LTO_LOGSENSE_TIMEOUT           60000
 #define LTO_MODESELECT_TIMEOUT         60000
 #define LTO_MODESENSE_TIMEOUT          60000
-#define LTO_UNLOAD_TIMEOUT            600000
+#define LTO_UNLOAD_TIMEOUT            840000
 #define LTO_PREVENTALLOWMEDIA_TIMEOUT  60000
-#define LTO_READ_TIMEOUT             1200000
+#define LTO_READ_TIMEOUT             2340000
 #define LTO_READATTRIB_TIMEOUT         60000
 #define LTO_READBLOCKLIMITS_TIMEOUT    60000
-#define LTO_READBUFFER_TIMEOUT         60000
+#define LTO_READBUFFER_TIMEOUT        480000
 #define LTO_READPOSITION_TIMEOUT       60000
 #define LTO_RELEASE_TIMEOUT            60000
 #define LTO_REPORTDENSITY_TIMEOUT      60000
 #define LTO_RESERVE_TIMEOUT            60000
-#define LTO_REWIND_TIMEOUT            600000
-#define LTO_SPACE_TIMEOUT            1200000
+#define LTO_REWIND_TIMEOUT            660000
+#define LTO_SPACE_TIMEOUT            2940000
 #define LTO_TESTUNITREADY_TIMEOUT      60000
-#define LTO_WRITE_TIMEOUT             300000
+#define LTO_WRITE_TIMEOUT            1560000
 #define LTO_WRITEATTRIB_TIMEOUT        60000
-#define LTO_WRITEFILEMARK_TIMEOUT     300000
-#define LTO_FORMAT_TIMEOUT            600000
+#define LTO_WRITEFILEMARK_TIMEOUT    1680000
+#define LTO_FORMAT_TIMEOUT           3240000
 
 /*
  * Timeout values for various DAT drive SCSI operations

@@ -96,7 +96,7 @@ struct cache_object *_cache_manager_create_object(struct cache_pool *pool)
 		return NULL;
 	}
 
-	/* HP-SOS: We don't store CRC along with the data. Hence removed the IBM's implementation */
+	/* HPE-SOS: We don't store CRC along with the data. Hence removed the IBM's implementation */
 #if 0
 	object->data = calloc(1, pool->object_size + LTFS_CRC_SIZE); /* Allocate extra 4-bytes for SCSI logical block protection */
 #endif /* 0 */

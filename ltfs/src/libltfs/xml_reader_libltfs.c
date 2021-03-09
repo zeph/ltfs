@@ -48,6 +48,11 @@
 **                  lucasvr@us.ibm.com
 **
 *************************************************************************************
+**
+**  (C) Copyright 2015 - 2017 Hewlett Packard Enterprise Development LP
+**  10/13/17 Added support for SNIA 2.4
+**
+*************************************************************************************
 */
 
 #include <libxml/xmlstring.h>
@@ -457,7 +462,7 @@ int _xml_parser_init(xmlTextReaderPtr reader, const char *top_name, int *idx_ver
      * This allocation must be freed with xmlFree
      * 
      */
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 	free(value);
 #else
 	xmlFree(value);
@@ -628,7 +633,7 @@ int _xml_parse_schema(xmlTextReaderPtr reader, struct ltfs_index *idx, struct lt
 	int ret;
 	unsigned long long value_int;
 	declare_parser_vars("ltfsindex");
-	declare_tracking_arrays(8, 3);
+	declare_tracking_arrays(8, 4);
 
 	/* start the parser: find top-level "index" tag, check version and encoding */
 	ret = _xml_parser_init(reader, parent_tag, &idx->version,
@@ -753,6 +758,17 @@ int _xml_parse_schema(xmlTextReaderPtr reader, struct ltfs_index *idx, struct lt
 			}
 			check_tag_end("comment");
 
+		} else if (! strcmp(name, "volumelockstate")) {
+			check_optional_tag(3);
+			get_tag_text();
+			if (idx->volumelockstate)
+				free(idx->volumelockstate);
+			idx->volumelockstate = strdup(value);
+			if (! idx->volumelockstate) {
+				ltfsmsg(LTFS_ERR, "10001E", name);
+				return -1;
+			}
+			check_tag_end("volumelockstate");
 		} else if (idx->version >= IDX_VERSION_UID && ! strcmp(name, NEXTUID_TAGNAME)) {
 			check_required_tag(7);
 			get_tag_text();
@@ -848,7 +864,9 @@ int _xml_parse_ip_criteria(xmlTextReaderPtr reader, struct ltfs_index *idx)
 		} else if (! strcmp(name, "name")) {
 			get_tag_text();
 
-			if (pathname_validate_file(value) < 0) {
+			// HPE MD 22.09.2017 function was changed for SNIA 2.4 extra param 0 
+			// will cause function to perform as before.
+			if (pathname_validate_file(value, 0) < 0) {
 				ltfsmsg(LTFS_ERR, "17098E", value);
 				return -1;
 			}
@@ -896,12 +914,16 @@ int _xml_parse_ip_criteria(xmlTextReaderPtr reader, struct ltfs_index *idx)
  * @param idx LTFS index data
  * @param vol LTFS volume to which the index belongs. May be NULL.
  * @return 0 on success or a negative value on error
+ *
+ * HPE MD 22.09.2017 Changes made to support SNIA 2.4 section 7.4 percent encoding 
  */
 int _xml_parse_dirtree(xmlTextReaderPtr reader, struct dentry *parent,
 	struct ltfs_index *idx, struct ltfs_volume *vol, struct name_list *dirname)
 {
 	int ret;
+	int percentencoded = 0;
 	unsigned long long value_int;
+   char *dir_percent_encoded;
 	struct dentry *dir;
 	declare_parser_vars("directory");
 	declare_tracking_arrays(9, 1);
@@ -929,13 +951,23 @@ int _xml_parse_dirtree(xmlTextReaderPtr reader, struct dentry *parent,
 			check_required_tag(0);
 
 			if (parent) {
-				get_tag_text();
-				if (xml_parse_filename(&dir->name, value) < 0)
-					return -1;
-				dirname->name = dir->name;
-				dirname->d = dir;
-				check_tag_end("name");
-			} else {
+                // HPE get the percent encoded flag if it exists
+                dir_percent_encoded = (char *)xmlTextReaderGetAttribute(reader, BAD_CAST "percentencoded");
+
+                if (dir_percent_encoded && ! strcasecmp(dir_percent_encoded, "true")) {
+                    //dir_percentencoded is boolean so assign to it
+                    dir->percentencoded = true;
+                    percentencoded = 1;
+                }
+
+              get_tag_text();
+              if (xml_parse_filename(&dir->name, value, percentencoded) < 0)
+                  return -1;
+              dirname->name = dir->name;
+              dirname->d = dir;
+
+              check_tag_end("name");
+            }else {
 				/* this is the root directory, so set the volume name */
 				check_empty();
 				if (empty > 0) {
@@ -946,7 +978,7 @@ int _xml_parse_dirtree(xmlTextReaderPtr reader, struct dentry *parent,
 				}
 
 				if (value && strlen(value) > 0) {
-					if (xml_parse_filename(&idx->volume_name, value) < 0)
+					if (xml_parse_filename(&idx->volume_name, value, percentencoded) < 0)
 						return -1;
 					/* if the value is the empty string, then xml_scan_text consumed the "name"
 					 * element end */
@@ -1151,7 +1183,7 @@ int _xml_parse_dir_contents(xmlTextReaderPtr reader, struct dentry *dir, struct 
 				}
 
 				ltfsmsg(LTFS_ERR, "10001E", "_xml_parse_dir_contents: add key");
-				/* HP fix for double free when a tape with a large index file is mounted
+				/* HPE fix for double free when a tape with a large index file is mounted
 				 * on a host with low physical memory
 				 */
 				/*free(entry_name);*/
@@ -1178,15 +1210,20 @@ int _xml_parse_dir_contents(xmlTextReaderPtr reader, struct dentry *dir, struct 
 
 /**
  * Parse a file into the given directory.
+ *
+ * HPE MD 22.09.2017 Changes made to support SNIA 2.4 section 7.4 percent encoding 
+ * HPE MD 12.10.2017 Changes made to support SNIA 2.4 Section 9.2.8 openforwrite.
  */
 int _xml_parse_file(xmlTextReaderPtr reader, struct ltfs_index *idx, struct dentry *dir, struct name_list *filename)
 {
 	int ret;
+	int percentencoded = 0;
 	unsigned long long value_int;
 	struct dentry *file;
+    char *file_percent_encoded;
 	struct extent_info *xt_last;
 	declare_parser_vars("file");
-	declare_tracking_arrays(9, 3);
+	declare_tracking_arrays(9, 4);
 	bool symlink_flag=false, extent_flag=false;
 
 	file = fs_allocate_dentry(dir, NULL, NULL, false, false, false, idx);
@@ -1198,29 +1235,47 @@ int _xml_parse_file(xmlTextReaderPtr reader, struct ltfs_index *idx, struct dent
 	while (true) {
 		get_next_tag();
 
-		if (! strcmp(name, "name")) {
-			check_required_tag(0);
-			get_tag_text();
-			if (xml_parse_filename(&file->name, value) < 0)
-				return -1;
-			filename->name = file->name;
-			filename->d = file;
-			check_tag_end("name");
+        if (!strcmp(name, "name")) {
+            check_required_tag(0);
+            
+            // HPE MD 22.09.2017 Changes made to reading name due to new percent encoding parameter
+            
+            file_percent_encoded = (char *)xmlTextReaderGetAttribute(reader, BAD_CAST "percentencoded");
+            if (file_percent_encoded && !strcasecmp(file_percent_encoded, "true")) {
+                file->percentencoded = true;
+                percentencoded = 1;
+            }
+            
+            get_tag_text();
+            if (xml_parse_filename(&file->name, value, percentencoded) < 0)
+                return -1;
+            filename->name = file->name;
+            filename->d = file;
 
-		} else if (!strcmp(name, "length")) {
-			check_required_tag(1);
-			get_tag_text();
-			if (xml_parse_ull(&value_int, value) < 0)
-				return -1;
-			file->size = value_int;
-			check_tag_end("length");
+            check_tag_end("name");
+            }
+            else if (!strcmp(name, "length")) {
+                check_required_tag(1);
+                get_tag_text();
+                if (xml_parse_ull(&value_int, value) < 0)
+                    return -1;
+                file->size = value_int;
+                check_tag_end("length");
+        } else if (!strcmp(name, "readonly")) {
+            check_required_tag(2);
+            get_tag_text();
+            if (xml_parse_bool(&file->readonly, value) < 0)
+                return -1;
+            check_tag_end("readonly");
 
-		} else if (!strcmp(name, "readonly")) {
-			check_required_tag(2);
-			get_tag_text();
-			if (xml_parse_bool(&file->readonly, value) < 0)
-				return -1;
-			check_tag_end("readonly");
+		} else if (!strcmp(name, "openforwrite")) {
+            check_optional_tag(0);
+            get_tag_text();
+            if (xml_parse_bool(&file->openforwrite, value) < 0)
+            {
+                return -1;
+            }
+            check_tag_end("openforwrite");
 
 		} else if (!strcmp(name, "modifytime")) {
 			check_required_tag(3);
@@ -1264,25 +1319,26 @@ int _xml_parse_file(xmlTextReaderPtr reader, struct ltfs_index *idx, struct dent
 			check_tag_end("changetime");
 
 		} else if (!strcmp(name, "extendedattributes")) {
-			check_optional_tag(0);
+			check_optional_tag(1);
 			check_empty();
 			if (empty == 0 && _xml_parse_xattrs(reader, file) < 0)
 					return -1;
 
 		} else if (!strcmp(name, "extentinfo")) {
-			check_optional_tag(1);
+			check_optional_tag(2);
 			check_empty();
 			if (empty == 0 && _xml_parse_extents(reader, idx->version, file) < 0)
 					return -1;
 			else extent_flag = true;
 
         } else if (!strcmp(name, "symlink")) {
-            check_optional_tag(2);
+            check_optional_tag(3);
 			get_tag_text();
 			file->target = strdup(value);
 			file->isslink = true;
 			symlink_flag = true;
-		} else if (idx->version >= IDX_VERSION_UID && ! strcmp(name, UID_TAGNAME)) {
+
+        } else if (idx->version >= IDX_VERSION_UID && ! strcmp(name, UID_TAGNAME)) {
 			check_required_tag(7);
 			get_tag_text();
 			if (xml_parse_ull(&value_int, value) < 0)
@@ -1527,10 +1583,13 @@ int _xml_parse_xattrs(xmlTextReaderPtr reader, struct dentry *d)
 
 /**
  * Parse a single extended attribute, appending it to the xattr list of the given dentry.
+ *
+ * HPE MD 22.09.2017 Changes made to support SNIA 2.4 section 7.4 percent encoding 
  */
 int _xml_parse_one_xattr(xmlTextReaderPtr reader, struct dentry *d)
 {
 	char *xattr_type;
+    char *xattr_percent_encoded;
 	struct xattr_info *xattr;
 	declare_parser_vars("xattr");
 	declare_tracking_arrays(2, 0);
@@ -1544,16 +1603,42 @@ int _xml_parse_one_xattr(xmlTextReaderPtr reader, struct dentry *d)
 	while (true) {
 		get_next_tag();
 
-		if (! strcmp(name, "key")) {
-			check_required_tag(0);
-			get_tag_text();
-			if (xml_parse_filename(&xattr->key, value) < 0) {
-				free(xattr);
-				return -1;
-			}
-			check_tag_end("key");
+        if (!strcmp(name, "key")) {
+            check_required_tag(0);
 
-		} else if (! strcmp(name, "value")) {
+            xattr_percent_encoded = (char *)xmlTextReaderGetAttribute(reader, BAD_CAST "percentencoded");
+            if (xattr_percent_encoded && !strcasecmp(xattr_percent_encoded, "true")) 
+            {
+               xattr->percentencoded = true;
+               get_tag_text();
+               if (xml_parse_xattrname(&xattr->percent_encoded_key, value, 1) < 0)
+               {
+                  free(xattr);
+                  return -1;
+               } 
+               else 
+               {
+                   update_xattr_safe_name(xattr); // Need to update xattr->key with the decoded name.
+               }  
+            }
+            else
+            {
+               get_tag_text();
+               if (xml_parse_xattrname(&xattr->key, value, 0) < 0)
+               {
+                  free(xattr);
+                  return -1;
+               }
+               else
+               {
+                  xattr->percent_encoded_key = NULL;
+               }   
+            }
+            
+            
+            check_tag_end("key");
+
+        } else if (! strcmp(name, "value")) {
 			check_required_tag(1);
 
 			xattr_type = (char *)xmlTextReaderGetAttribute(reader, BAD_CAST "type");
@@ -1598,8 +1683,8 @@ int _xml_parse_one_xattr(xmlTextReaderPtr reader, struct dentry *d)
 				xattr->size = 0;
 			}
 
-/* HP : need to free using xmlFree to clean up properly */
-#ifndef HP_mingw_BUILD
+/* HPE : need to free using xmlFree to clean up properly */
+#ifndef HPE_mingw_BUILD
 			free(xattr_type);
 #else
 			xmlFree(xattr_type);

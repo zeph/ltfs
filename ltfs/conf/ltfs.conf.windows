@@ -8,13 +8,13 @@
 # Tape device plugins
 # Syntax: plugin driver PLUGIN-NAME PLUGIN-PATH
 # The PLUGIN-PATH may contain spaces.
-plugin driver ltotape_win HP_Rep_Charlibdriver-ltotape-win.dll
+plugin driver ltotape_win HPE_Rep_Charlibdriver-ltotape-win.dll
 
 # I/O scheduler plugins
 # Syntax: plugin iosched PLUGIN-NAME PLUGIN-PATH
 # The PLUGIN-PATH may contain spaces.
-plugin iosched unified HP_Rep_Charlibiosched-unified.dll
-plugin iosched fcfs HP_Rep_Charlibiosched-fcfs.dll
+plugin iosched unified HPE_Rep_Charlibiosched-unified.dll
+plugin iosched fcfs HPE_Rep_Charlibiosched-fcfs.dll
 
 # Key Manager Interface plugins
 # Syntax: plugin kmi PLUGIN-NAME PLUGIN-PATH

@@ -1,22 +1,22 @@
 =======================================================================
-Linear Tape File System (LTFS) - Version 3.0.0
+HPE StoreOpen Software (HPE-SOS) - Version 3.4.2
 =======================================================================
 
-Files in this download contain Licensed Materials, property of HP,
-(C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+Files in this download contain Licensed Materials, property of HPE,
+(C) Copyright 2015-2018 Hewlett Packard Enterprise Development LP
 
 Files in this download also contain Licensed Materials, property of IBM,
 (C) Copyright IBM Corp. 2010, 2014  
 
-The LTFS software application is an open-source tape file system
+The HPE LTFS software application is an open-source tape file system
 implemented on dual partition tape drives.
 
-This file is part of the Linear Tape File System package.  LTFS is
+This file is part of the HPE Linear Tape File System package.  HPE LTFS is
 free software; you can redistribute it and/or modify it under the terms
 of the GNU Lesser General Public License as published by the Free Software
 Foundation, version 2.1 of the License.
 
-LTFS is distributed in the hope that it will be useful, but WITHOUT
+HPE LTFS is distributed in the hope that it will be useful, but WITHOUT
 ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
 FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public
 License for more details.
@@ -28,18 +28,19 @@ or download the license from <http://www.gnu.org/licenses/>.
 
 See the Licensing agreement (COPYING.LIB) when LTFS is downloaded.
 
-Further details on LTFS implementation can be found at
- www.lto.org/technology/ltfs.html
+Further details on HPE's LTFS implementation can be found at
+ www.hpe.com/storage/storeopen
 
 
 =======================================================================
-LTFS usage
+HPE-SOS usage
 =======================================================================
 
-1.	Build and/or install the LTFS application
+1.	Build and/or install the HPE-SOS application
 
-	Installation instuctions are in INSTALLING.linux/INSTALLING.macosx
-	Information on how to build from source are in BUILDING.linux/BUILDING.macosx/Building.windows 
+	Installation instuctions are in INSTALLING.linux / INSTALLING.macosx
+	Information on how to build from source are in BUILDING.linux /
+        BUILDING.macosx / Building.windows 
 
 2.	Ensure that /usr/local/bin/ is in your command search path
 
@@ -61,19 +62,22 @@ Available options are:
   -f, --force               Force to format medium
   -s, --tape-serial=<id>    Tape serial number (6 alphanumeric ASCII characters)
   -n, --volume-name=<name>  Tape volume name (LTFS VOLUME by default)
-  -r, --rules=<rules>       Rules for choosing files to write to the index partition.
+  -r, --rules=<rules>       Rules for choosing files to write to the 
+                            index partition.
                             The syntax of the rule argument is:
                                 size=1M
                                 size=1M/name=pattern
                                 size=1M/name=pattern1:pattern2:pattern3
-                            A file is written to the index partition if it is no larger
-                            than the given size AND matches at least one of the name
-                            patterns (if specified). The size argument accepts K, M, and G
-                            suffixes. Name patterns might contain the special characters
-                            '?' (match any single character) and '*' (match zero or more
-                            characters).
+                            A file is written to the index partition if it is
+                            no larger than the given size AND matches at least
+                            one of the name patterns (if specified). The size
+                            argument accepts K, M, and G suffixes. Name
+                            patterns might contain the special characters
+                            '?' (match any single character) and '*' (match
+                            zero or more characters).
       --no-override         Disallow mount-time data placement policy changes
-  -w, --wipe                Restore the LTFS medium to an unpartitioned medium (format to a legacy scratch medium)
+  -w, --wipe                Restore the LTFS medium to an unpartitioned medium
+                            (format to a legacy scratch medium)
   -q, --quiet               Suppress progress information and general messages
   -t, --trace               Enable function call tracing
       --syslogtrace         Enable diagnostic output to stderr and syslog
@@ -81,14 +85,18 @@ Available options are:
   -h, --help                This help
   -p, --advanced-help       Full help, including advanced options
   -g, --interactive         Interactive mode
-  -i, --config=<file>       Use the specified configuration file (default: /usr/local/etc/ltfs.conf)
-  -e, --backend=<name>      Use the specified tape device backend (default: ltotape)
+  -i, --config=<file>       Use the specified configuration file
+                             (default: /usr/local/etc/ltfs.conf)
+  -e, --backend=<name>      Use the specified tape device backend 
+                             (default: ltotape)
   -b, --blocksize=<num>     Set the LTFS record size (default: 524288)
   -c, --no-compression      Disable compression on the volume
   -k, --keep-capacity       Keep the tape medium's total capacity proportion
   -x, --fulltrace           Enable full function call tracing (slow)
-      --long-wipe           Unformat the medium and erase any data on the tape by overwriting special data pattern.
-                            This operation takes over 3 hours. Once you start, you cannot interrupt it.
+      --long-wipe           Unformat the medium and erase any data on the tape
+                            by overwriting with special data pattern.
+                            This operation takes over 3 hours. Once you start,
+                            you cannot interrupt it.
 
 LTFS17085I Plugin: Loading "ltotape" driver
 LTOTAPE backend options:
@@ -160,51 +168,74 @@ Module options:
 
 [iconv]
 	-o from_code=CHARSET   original encoding of file names (default: UTF-8)
-	-o to_code=CHARSET	   new encoding of the file names (default: UTF-8)
+	-o to_code=CHARSET     new encoding of the file names (default: UTF-8)
 
 LTFS options:
-	-o config_file=<file>     Configuration file (default: /usr/local/etc/ltfs.conf)
+	-o config_file=<file>     Configuration file
+                                   (default: /usr/local/etc/ltfs.conf)
 	-o work_directory=<dir>   LTFS work directory (default: /tmp/ltfs)
 	-o atime                  Update index if only access times have changed
-	-o noatime                Do not update index if only access times have changed (default)
+	-o noatime                Do not update index if only access times have
+                                   changed (default)
 	-o tape_backend=<name>    tape backend to use (default: ltotape)
-	-o iosched_backend=<name> I/O scheduler implementation to use (default: unified, use "none" to disable)
-	-o umask=<mode>           Override default permission mask (3 octal digits, default: 000)
-	-o fmask=<mode>           Override file permission mask (3 octal digits, default: 000)
-	-o dmask=<mode>           Override directory permission mask (3 octal digits, default: 000)
-	-o min_pool_size=<num>    Minimum write cache pool size. Cache objects are 1 MB each (default: 25)
-	-o max_pool_size=<num>    Maximum write cache pool size. Cache objects are 1 MB each (default: 50)
-	-o rules=<rules>          Rules for choosing files to write to the index partition.
+	-o iosched_backend=<name> I/O scheduler implementation to use
+                                   (default: unified, use "none" to disable)
+	-o umask=<mode>           Override default permission mask 
+                                   (3 octal digits, default: 000)
+	-o fmask=<mode>           Override file permission mask 
+                                   (3 octal digits, default: 000)
+	-o dmask=<mode>           Override directory permission mask 
+                                   (3 octal digits, default: 000)
+	-o min_pool_size=<num>    Minimum write cache pool size. Cache objects
+                                  are 1 MB each (default: 25)
+	-o max_pool_size=<num>    Maximum write cache pool size. Cache objects
+                                  are 1 MB each (default: 50)
+	-o rules=<rules>          Rules for choosing files to write to the
+                                  index partition.
 	                          The syntax of the rule argument is:
 	                          size=1M
 	                          size=1M/name=pattern
 	                          size=1M/name=pattern1:pattern2:pattern3
-	                          A file is written to the index partition if it is no larger
-	                          than the given size AND matches at least one of the name
-	                          patterns (if specified). The size argument accepts K, M, and G
-	                          suffixes. Name patterns might contain the special characters
-	                          '?' (match any single character) and '*' (match zero or more
+	                          A file is written to the index partition if 
+                                  it is no larger than the given size AND 
+                                  matches at least one of the name patterns (if
+                                  specified). The size argument accepts K, M,
+                                  and G suffixes. Name patterns might contain
+                                  the special characters '?' (match any single
+                                  character) and '*' (match zero or more
 	                          characters).
-	-o quiet                  Disable informational messages (same as verbose=1)
+	-o quiet                  Disable informational messages (same as 
+                                  verbose=1)
 	-o trace                  Enable diagnostic output (same as verbose=3)
-	-o syslogtrace            Enable diagnostic output to stderr and syslog(same as verbose=303)
+	-o syslogtrace            Enable diagnostic output to stderr and syslog
+                                  (same as verbose=303)
 	-o fulltrace              Enable full call tracing (same as verbose=4)
-	-o verbose=<num>          Override output verbosity directly (default: 2)
+	-o verbose=<num>          Override output verbosity directly (default:2)
 	-o eject                  Eject the cartridge after unmount
-	-o noeject                Do not eject the cartridge after unmount (default)
+	-o noeject                Do not eject the cartridge after unmount
+                                  (default)
 	-o sync_type=<type>       Specify sync type (default: time@5)
 	                          <type> should be specified as follows:
-	                          time@min:  LTFS attempts to write an index each 'min' minutes.
-	                                     min should be a decimal number from 1 to 10
-	                                     It is equivalent to "-o sync_type=unmount" when 0 is specified
-	                                     (default: min=5)
-	                          close:     LTFS attempts to write an index when a file is closed
-	                          unmount:   LTFS attempts to write an index when the medium is unmounted
-	-o force_mount_no_eod     Skip EOD existence check when mounting (read-only mount)
+	                            time@min:  LTFS attempts to write an index
+                                         every 'min' minutes.  min should be a
+                                         decimal value from 1 to 10. A value of
+                                         0 is equivalent to 
+                                         "-o sync_type=unmount" 
+	                                 (default: min=5)
+	                            close:     LTFS attempts to write an index
+                                         when each file is closed. This is not
+                                         recommended for normal use.
+	                            unmount:   LTFS attempts to write an index
+                                         only when the medium is unmounted
+	-o force_mount_no_eod     Skip EOD existence check when mounting
+                                  (read-only mount)
 	                          Only use for a CM corrupted medium
-	-o rollback_mount=<gen>   Attempt to mount on previous index generation (read-only mount)
-	-o release_device         Clear device reservation (should be specified with -o devname
-	-o capture_index          Capture latest index to work directory at unmount
+	-o rollback_mount=<gen>   Attempt to mount on previous index generation
+                                  (read-only mount)
+	-o release_device         Clear device reservation (should be specified
+                                  with -o devname
+	-o capture_index          Capture latest index to the work directory at
+                                  unmount
 	-a                        Advanced help, including standard FUSE options
 
 453e LTFS17085I Plugin: Loading "ltotape" driver
@@ -238,7 +269,8 @@ LTOTAPE backend options:
 	Usage: unltfs <options>
 	
 	-d, --device=<name> specifies the tape drive to use
-	-y, --justdoit      omits normal verification steps, reformats without further prompting
+	-y, --justdoit      omits normal verification steps, reformats without
+                            further prompting
 	-e  --eject         eject tape after operation completes successfully
 	-q, --quiet         suppresses all progress output
 	-t, --trace         displays detailed progress
@@ -247,8 +279,9 @@ LTOTAPE backend options:
 	-b, --backend       specifies a different tape backend subsystem
 	-x, --fulltrace     displays debug information (verbose)
 	
-8.	If the cartridge gets inconsistent due to power failure or improper unmount or incase 
-	of any other failures then user can make it consistent again using the ltfsck utility.
+8.	If the cartridge becomes inconsistent due to power failure, improper
+        unmount, or other exceptional conditions then the ltfsck utility can
+        be used to repair it / make it consistent again.
 
 	$ ltfsck /dev/st0
 
@@ -261,15 +294,22 @@ LTOTAPE backend options:
 Available options are:
    -g, --generation=<generation>   Specify the generation to roll back
    -r, --rollback                  Roll back to the point specified by -g
-   -n, --no-rollback               Do not roll back. Verify the point specified by -g (default)
-   -f, --full-recovery             Recover extra data blocks into directory _ltfs_lostandfound
-   -z, --deep-recovery             Recover EOD missing cartridge.
-                                   Some blocks might be erased, but recover to final unmount point
-                                   with an index version of at least  2.0.0  or earlier.
-                                   (Must be used for a cartridge that cannot be recovered by a normal option.)
+   -n, --no-rollback               Do not roll back. Verify the point specified
+                                   by -g (default)
+   -f, --full-recovery             Recover extra data blocks into directory 
+                                   _ltfs_lostandfound
+   -z, --deep-recovery             Recover a cartridge with missing EOD
+                                   Some blocks might be erased, but recover to
+                                   final unmount point with an index version of 
+                                   at least  2.0.0  or earlier. This option must
+                                   be used for a cartridge that cannot be
+                                   recovered by a normal repair)
    -l, --list-rollback-points      List rollback points
-   -m, --full-index-info           Display full index information (Effective only for -l option)
-   -v, --traverse=<strategy>       Set traverse mode for listing roll back points. Strategy should be forward or backward. (default: backward)
+   -m, --full-index-info           Display full index information (works only 
+                                   with the -l option)
+   -v, --traverse=<strategy>       Set traverse mode for listing roll back 
+                                   points. Strategy should be forward or 
+                                   backward. (default: backward)
    -j, --erase-history             Erase history at rollback
    -k, --keep-history              Keep history at rollback (default)
    -q, --quiet                     Suppress informational messages
@@ -278,11 +318,14 @@ Available options are:
    -V, --version                   Version information
    -h, --help                      This help
    -p, --advanced-help             Full help, including advanced options
-   -i, --config=<file>             Use the specified configuration file (default: /usr/local/etc/ltfs.conf)
+   -i, --config=<file>             Use the specified configuration file 
+                                   (default: /usr/local/etc/ltfs.conf)
    -e, --backend=<name>            Override the default tape device backend
    -x, --fulltrace                 Enable full function call tracing (slow)
-       --capture-index             Capture index information to the current directory (-g is effective for this option)
-       --salvage-rollback-points   List the rollback points of the cartridge that has no EOD
+       --capture-index             Capture index information to the current 
+                                   directory (-g is effective for this option)
+       --salvage-rollback-points   List the rollback points of a cartridge that 
+                                   has no EOD
 
 LTFS17085I Plugin: Loading "ltotape" driver
 LTOTAPE backend options:
@@ -293,11 +336,56 @@ Usage example:
   ltfsck /dev/nst0
   ltfsck --generation --rollback /dev/nst0
   ltfsck --deep-recovery --full-recovery /dev/nst0
+  
+Changes from version v3.4.1 to 3.4.2:
+=====================================	
+
+	- Corrected issue switching in/out of append-only mode with LTO7/LTO8 drives
+	- Corrected issue with ltfscopy and md5sum verification
+
+Changes from version v3.4.0 to 3.4.1:
+=====================================	
+	
+	- Corrected issue affecting sending of library drive tickets to CVTL
+	- Corrected issue with truncation of barcodes
+
+Changes from version v3.3.0 to 3.4.0:
+=====================================	
+	
+	- Support append-only mode option flag for LTO7 & LTO8 drives
+	- Defect fixes
+  
+Changes from version v3.2.0 to 3.3.0:
+=====================================
+
+	- Support for HPE LTO8 tape drives
+	- Support for SNIA 2.4 Percent Encoding
+	- Support for SNIA 2.4 Vol Avisory Locking
+	- Support for SNIA 2.4 Open for Write
+	- Defect fixes
+
+Changes from version v3.1.0 to 3.2.0:
+=====================================
+
+	- Support for Volume Advisory Locking
+	- Support for volume UUID
+	- Support for Windows Server 2016
+	- Support for macOS Sierra 
+	- Support for capturing index by default (Windows and Mac Only)
+	- LTFSCOPY default behavior changed to prompt before overwriting files
+	- LTFSCOPY will preserve modification time with new option '-t'
+	- Added support for HPE Archive Manager tape identification and mounting the same as read only
+	- Defect fixes
+
+Changes from version v3.0.0 to 3.1.0:
+=====================================
+
+	- Hewlett Packard Enterprise Branding
 
 Changes from version v2.3.0 to 3.0.0:
 =====================================
 
-	- Support for LTO-7 Ultrium SAS standalone tape drives
+	- Support for HP LTO-7 Ultrium SAS standalone tape drives
 	- LTFS Configurator displays messages indicating the progress of the mount operation
 	- LTFS Configurator supports custom names for tape drives
 	- CartridgeBrowser utility supports search based on file attribute values
@@ -427,32 +515,32 @@ Changes from version v1.1.0 to v1.2.0:
 Important Note:
 ===============
 
-Earlier versions of the LTFS application supported the original 1.0 LTFS
+Earlier versions of the HPE LTFS application supported the original 1.0 LTFS
 format specification; version v1.2.0 and later supports the updated 2.0.0 LTFS
 format specification.  LTFS volumes created with application v1.2.0 will not
 be readable in older versions of the LTFS application, as shown in the
 following table:
 
-						Cartridge written by	Cartridge written by	Cartridge written by
-LTFS application		v1.1.0 or earlier		v1.2.0 or later			v2.1.0 or later
+                      Cartridge written by    Cartridge written by    Cartridge written by
+LTFS application       v1.1.0 or earlier       v1.2.0 or later         v2.1.0 or later
 --------------------  ----------------------  ----------------------  -----------------------
-v1.1.0 or earlier		Read/Write ok			Cannot be mounted		N/A
+v1.1.0 or earlier       Read/Write ok           Cannot be mounted       N/A
 
-v1.2.0 or later			Readable ok; will		Read/Write ok			N/A
-						automatically be 
-						converted to new
-						format if written
+v1.2.0 or later         Readable ok; will       Read/Write ok           N/A
+                        automatically be 
+                        converted to new
+                        format if written
 
-v2.1.0 or later			Readable ok; will		Readable ok; will		Read/Write ok
-						automatically be		automatically be 
-						converted to new		converted to new
-						format if written		format if written
-						
-It is recommended that all instances of LTFS should be updated to latest version
+v2.1.0 or later         Readable ok; will       Readable ok; will       Read/Write ok
+                        automatically be        automatically be 
+                        converted to new        converted to new
+                        format if written       format if written
+
+HPE recommends that all instances of HPE LTFS should be updated to latest version
 to avoid these compatibility issues. 
 
 If for some reason it is important to maintain cartridges readable by
-previous versions of the LTFS application, care should be taken to avoid
+previous versions of the HPE LTFS application, care should be taken to avoid
 writing to those cartridges with the new version of the application.  This
 may be accomplished by mounting the volume as read-only, or by using the
 cartridge write-protect tab to prevent cartridge updates.  However this

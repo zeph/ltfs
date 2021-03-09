@@ -71,7 +71,7 @@
  * defined. Strange, yes, but true 
  *  
  */
-#if defined(HP_mingw_BUILD) && defined(__MINGW32__)
+#if defined(HPE_mingw_BUILD) && defined(__MINGW32__)
 
 #undef __MINGW32__
 #include <unicode/ucnv.h>
@@ -82,7 +82,7 @@
 #include <unicode/ucnv.h>
 #include <unicode/ures.h>
 #include <unicode/utypes.h>
-#endif /* #if defined(HP_mingw_BUILD) && defined(__MINGW32__) */
+#endif /* #if defined(HPE_mingw_BUILD) && defined(__MINGW32__) */
 #include <unicode/udata.h>
 #include <unicode/putil.h>
 #include <unicode/uclean.h>
@@ -145,7 +145,7 @@ static int syslog_levels[] = {
  * be bin_libltfs to avoid collision 
  *  
  */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 extern char bin_libltfs_dat[];
 extern char internal_error_dat[];
 #define libltfs_dat bin_libltfs_dat
@@ -154,7 +154,7 @@ extern char internal_error_dat[];
 #else
 char *libltfs_dat;
 char *internal_error_dat;
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 #else
 U_CFUNC char libltfs_dat[]; /* U_CFUNC is an ICU synonym for extern. */
 U_CFUNC char internal_error_dat[]; /* U_CFUNC is an ICU synonym for extern. */
@@ -179,7 +179,7 @@ static char msg_buf[OUTPUT_BUF_SIZE * 2];
 static UConverter *output_conv = NULL;
 
 /* This function does not exist in our code base */
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 #ifdef mingw_PLATFORM
 static int _open_message_file(char *bundle_name, void **bundle_data);
 #endif
@@ -197,7 +197,7 @@ int ltfsprintf_init(int log_level, bool use_syslog, bool print_thread_id)
 		fprintf(stderr, "LTFS10002E Could not initialize mutex (%d)\n", ret);
 		return -ret;
 	}
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 	output_conv = ucnv_open(NULL, &err);
 #else
 	/* We always use the UTF-8 converter */
@@ -221,7 +221,7 @@ int ltfsprintf_init(int log_level, bool use_syslog, bool print_thread_id)
  * data, thus we do not use this call
  *  
  */
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 	u_setDataDirectory(LTFS_RB_DIR);
 #endif
 #endif
@@ -288,7 +288,7 @@ void ltfsprintf_finish()
  * data, thus nothing to free here
  *  
  */
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 	free(libltfs_dat);
 #endif
 #endif
@@ -331,7 +331,7 @@ int ltfsprintf_load_plugin(const char *bundle_name, void *bundle_data, void **me
  * data, thus we need this call
  *  
  */
-#if !defined(mingw_PLATFORM) || defined(HP_mingw_BUILD)
+#if !defined(mingw_PLATFORM) || defined(HPE_mingw_BUILD)
 	udata_setAppData(bundle_name, bundle_data, &err);
 	if (U_FAILURE(err)) {
 		if (libltfs_dat_init)

@@ -6,7 +6,7 @@
 **
 ** CONTENTS:        Platform-specific portion of ltotape LTFS backend for Microsoft Windows
 **
-** (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+** (C) Copyright 2015, 2016 Hewlett Packard Enterprise Development LP
 **
 ** This program is free software; you can redistribute it and/or modify it
 **  under the terms of version 2.1 of the GNU Lesser General Public License
@@ -334,7 +334,7 @@ int ltotape_scsiexec (ltotape_scsi_io_type *scsi_io)
 }
 
 /**
- * Open HP tape backend.
+ * Open HPE tape backend.
  * TODO: should be returning an integer instead of setting errno
  * @param devname device name of the LTO tape drive (e.g. TAPE0)
  * @return a pointer to the ltotape backend on success or NULL on error
@@ -502,7 +502,7 @@ int ltotape_reopen(const char *devname, void *handle)
 }
 
 /**
- * Close HP tape backend
+ * Close HPE tape backend
  * @param device a pointer to the ltotape backend
  * @return 0 on success or a negative value on error
  */

@@ -280,6 +280,10 @@ static struct error_map fuse_error_list[] = {
 	{ LTFS_NODE_DEGATE_FAIL,         "I1191E", EIO },
 	{ LTFS_CLUSTER_MRSW_FAIL,        "I1192E", EIO },
 
+	{ LTFS_VOLUME_LOCKED,            "I1300E", EROFS },
+	{ LTFS_VOLUME_WRITEERRLOCKED,    "I1301E", EROFS },
+	{ LTFS_VOLUME_PERMLOCKED,        "I1302E", EROFS },
+
 	{ EDEV_NO_SENSE,                 "D0000E", EIO},
 	{ EDEV_OVERRUN,                  "D0002E", EIO},
 	{ EDEV_UNDERRUN,                 "D0003E", ENODATA},

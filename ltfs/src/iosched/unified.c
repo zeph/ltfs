@@ -49,7 +49,7 @@
  **
  *************************************************************************************
  **
- **  (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+ **  (C) Copyright 2015, 2016 Hewlett Packard Enterprise Development LP
  **
  **  03/08/11 In unified_write, permit the operation to continue if the tape is 
  **       reporting ENOSPC (i.e. past the EWEOM point).  Failure to do so results in a
@@ -65,6 +65,7 @@
  */
 
 #include "libltfs/ltfs.h"
+#include "libltfs/tape.h"
 #include "libltfs/ltfs_fsops_raw.h"
 #include "libltfs/index_criteria.h"
 #include "libltfs/iosched_ops.h"
@@ -732,7 +733,9 @@ write_start:
 
 	/* Disallow writes if the medium is read-only */
 	if (! checked_readonly) {
-		ret = ltfs_get_tape_readonly(priv->vol);
+		ret = tape_read_only(priv->vol->device, ltfs_part_id2num(ltfs_ip_id(priv->vol), priv->vol));
+		if (ret == 0 || ret == -LTFS_LESS_SPACE)
+			ret = tape_read_only(priv->vol->device, ltfs_part_id2num(ltfs_dp_id(priv->vol), priv->vol));
 		/* Disallow writes if the medium is read-only */
 		/* CHANGED Nov-12-2013 to permit ENOSPC errors to continue..     */
 		/*  Otherwise you get "successful" writes but incomplete files */
@@ -2012,7 +2015,7 @@ int _unified_flush_unlocked(struct dentry *d, struct unified_data *priv)
      *
      * actgen -d q: directory.act
      */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 	/* Remove dpr from the DP queue and working set */
 	_unified_update_queue_membership(false, true, REQUEST_DP, dpr, priv);
 	_unified_update_queue_membership(false, true, REQUEST_PARTIAL, dpr, priv);
@@ -2027,7 +2030,7 @@ int _unified_flush_unlocked(struct dentry *d, struct unified_data *priv)
      * Processing moved above
      * 
      */
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 	/* Remove dpr from the DP queue and working set */
 	_unified_update_queue_membership(false, true, REQUEST_DP, dpr, priv);
 	_unified_update_queue_membership(false, true, REQUEST_PARTIAL, dpr, priv);
@@ -2361,7 +2364,7 @@ struct iosched_ops *iosched_get_ops(void)
  * data. 
  *  
  */
-#if !defined(mingw_PLATFORM) || defined(HP_mingw_BUILD)
+#if !defined(mingw_PLATFORM) || defined(HPE_mingw_BUILD)
 extern char iosched_unified_dat[];
 #endif
 
@@ -2374,7 +2377,7 @@ const char *iosched_get_message_bundle_name(void **message_data)
      * data. 
      *  
      */
-#if !defined(mingw_PLATFORM) || defined(HP_mingw_BUILD)
+#if !defined(mingw_PLATFORM) || defined(HPE_mingw_BUILD)
 	*message_data = iosched_unified_dat;
 #else
 	*message_data = NULL;

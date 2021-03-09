@@ -49,10 +49,11 @@
 **
 *************************************************************************************
 **
-**  (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+**  (C) Copyright 2015 - 2017 Hewlett Packard Enterprise Development LP
 **  06/10/10 Define PACKAGE_OWNER and reference it in ltfs.c to make it configurable
-**           Replace PACKAGE_VERSION with HP nomenclature
+**           Replace PACKAGE_VERSION with HPE nomenclature
 **  11/12/12 Define SOFTWARE_PRODUCT_NAME for use in xattr.c
+**  10/13/17 Added support for SNIA 2.4
 **
 *************************************************************************************
 **
@@ -103,13 +104,13 @@ extern "C" {
  * defined. Strange, yes, but true 
  *  
  */
-#if defined(HP_mingw_BUILD) && defined(__MINGW32__)
+#if defined(HPE_mingw_BUILD) && defined(__MINGW32__)
 #undef __MINGW32__
 #include <unicode/utypes.h>
 #define __MINGW32__
 #else 
 #include <unicode/utypes.h>
-#endif /* #if defined(HP_mingw_BUILD) && defined(__MINGW32__) */
+#endif /* #if defined(HPE_mingw_BUILD) && defined(__MINGW32__) */
 #endif /* __APPLE__ */
 
 #ifndef mingw_PLATFORM
@@ -141,7 +142,7 @@ struct device_data;
 #endif /* mingw_PLATFORM */
 #endif /* LTFS_DEFAULT_WORK_DIR */
 
-#define LTFS_BUILD_VERSION            47 /* Build version */
+#define LTFS_BUILD_VERSION            9
 #define LTFS_MIN_CACHE_SIZE_DEFAULT   25 /* Default minimum cache size (MiB) */
 #define LTFS_MAX_CACHE_SIZE_DEFAULT   50 /* Default maximum cache size (MiB) */
 #define LTFS_SYNC_PERIOD_DEFAULT (5 * 60) /* default sync period (5 minutes) */
@@ -167,35 +168,35 @@ struct device_data;
 
 #define LTFS_LABEL_VERSION_MIN        MAKE_LTFS_VERSION(1,0,0)   /* Min supported label version */
 #define LTFS_LABEL_VERSION_MAX        MAKE_LTFS_VERSION(2,99,99) /* Max supported label version */
-#define LTFS_LABEL_VERSION            MAKE_LTFS_VERSION(2,2,0)   /* Written label version */
-#define LTFS_LABEL_VERSION_STR        "2.2.0"    /* Label version string */
+#define LTFS_LABEL_VERSION            MAKE_LTFS_VERSION(2,4,0)   /* Written label version */
+#define LTFS_LABEL_VERSION_STR        "2.4.0"    /* Label version string */
 
 #define LTFS_INDEX_VERSION_MIN        MAKE_LTFS_VERSION(1,0,0)    /* Min supported index version */
 #define LTFS_INDEX_VERSION_MAX        MAKE_LTFS_VERSION(2,99,99)  /* Max supported index version */
-#define LTFS_INDEX_VERSION            MAKE_LTFS_VERSION(2,2,0)    /* Written index version */
-#define LTFS_INDEX_VERSION_STR        "2.2.0"  /* Index version string */
+#define LTFS_INDEX_VERSION            MAKE_LTFS_VERSION(2,4,0)    /* Written index version */
+#define LTFS_INDEX_VERSION_STR        "2.4.0"  /* Index version string */
 
 #define INDEX_MAX_COMMENT_LEN         65536 /* Maximum comment field length (per LTFS Format) */
 #define MAX_VOLUME_NAME_SIZE 		  159   /* Maximum size of the user medium text label is 160 with a NULL character termination */
 
 #ifdef __APPLE__
 #define PACKAGE_NAME                  "LTFS"
-#define PACKAGE_VERSION               "3.0.0"
+#define PACKAGE_VERSION               "3.4.2"
 #else
 #include "config.h"
 #endif
 
-#ifdef HP_BUILD
-#define PACKAGE_OWNER                 "HP LTFS"
-#define LTFS_VENDOR_NAME              "HP "
-#define SOFTWARE_PRODUCT_NAME         "StoreOpen Standalone"
+#ifdef HPE_BUILD
+#define PACKAGE_OWNER                 "HPE LTFS"
+#define LTFS_VENDOR_NAME              "HPE "
+#define SOFTWARE_PRODUCT_NAME         "StoreOpen Software"
 #elif defined QUANTUM_BUILD
 #define PACKAGE_OWNER                 "QUANTUM LTFS"
 #define LTFS_VENDOR_NAME              "QUANTUM "
-#define SOFTWARE_PRODUCT_NAME         "LTFS Standalone"
+#define SOFTWARE_PRODUCT_NAME         "LTFS Software"
 #elif defined GENERIC_OEM_BUILD
 #define PACKAGE_OWNER                 "LTFS"
-#define LTFS_VENDOR_NAME              "LTFS"
+#define LTFS_VENDOR_NAME              ""
 #define SOFTWARE_PRODUCT_NAME         "LTFS"
 #else
 #define PACKAGE_OWNER                 "IBM LTFS"
@@ -211,7 +212,7 @@ struct device_data;
 #undef LTFS_VENDOR_NAME
 #define LTFS_VENDOR_NAME             "LTFS"
 #undef SOFTWARE_PRODUCT_NAME
-#define SOFTWARE_PRODUCT_NAME        "LTFS Standalone"
+#define SOFTWARE_PRODUCT_NAME        "LTFS Software"
 #endif
 #endif
 #define LTFS_LIVELINK_EA_NAME         "ltfs.vendor.IBM.prefixLength"
@@ -278,11 +279,14 @@ struct extent_info {
 
 /**
  * Extended attributes
+ * HPE MD 22.09.2017 Added extra fields for SNIA 2.4
  */
 struct xattr_info {
 	TAILQ_ENTRY(xattr_info) list;
 	char  *key;
+   char  *percent_encoded_key; /**< HPE Encoded Key */ 
 	char  *value;
+	bool  percentencoded;       /**< HPE key changed */
 	size_t size;
 };
 
@@ -333,6 +337,8 @@ struct dentry {
 	/* Take the meta_lock before accessing these fields. */
 	TAILQ_HEAD(xattr_struct, xattr_info) xattrlist;  /**< List of extended attributes */
 	bool     readonly;             /**< True if file is marked read-only */
+	bool     percentencoded;       /**< HPE True if file or dir name encoded as per SNIA 2.4 */
+	bool     openforwrite;         /**< HPE True when file is opened as per SNIA 2.4 */  
 	struct ltfs_timespec creation_time; /**< Time of creation */
 	struct ltfs_timespec modify_time;   /**< Time of last modification */
 	struct ltfs_timespec access_time;   /**< Time of last access */
@@ -350,6 +356,45 @@ struct dentry {
 
 	struct name_list *child_list;  /* for hash search */
 };
+
+/**
+ * Volume advisory locking bit-field
+ * @bitfield contains the 32 bit field for volume lock state
+ * @lock_bitfield lock to access the bit field
+ */
+
+struct volume_lockbits {
+	unsigned int bitfield;
+	pthread_mutex_t lock_bitfield;
+};
+
+/*
+ * Enumerated type to set the bitfield for
+ * volume advisory locking
+ */
+typedef enum {
+	UNLOCKED        =  0x00,
+	LOCKED          =  0x01,
+	PERM_LOCKED     =  0x02,
+	PHY_WRITE_PRTCT =  0x04,
+	PRMWP           =  0x08,
+	PERSWP          =  0x10,
+	PWE             =  0x20,
+	DPPWE           =  0x40,  // HPE MD 25.09.2017 Added for SNIA 2.4
+	IPPWE           =  0x80   // HPE MD 25.09.2017 Added for SNIA 2.4
+} set_bits;
+
+typedef enum {
+    UNLOCKED_MAM    = 0x00,
+    LOCKED_MAM      = 0x01,
+    PWE_MAM   	     = 0x02,
+    PERMLOCKED_MAM  = 0x03,
+    DPPWE_MAM       = 0x04,
+    IPPWE_MAM       = 0x05,
+    DP_IP_PWE_MAM   = 0x06,
+	 NOLOCK_MAM	     = 0x80  // HPE MD 25.09.2017 This used to be set to 0x04.  Not sure why but as 0x04 is now 
+	                         // used in the spec have changed to a larger value.  
+} mam_lockval;
 
 /*
 struct tape_attr {
@@ -423,6 +468,7 @@ struct ltfs_volume {
 	char *mountpoint;              /**< Store mount point for Live Link (SDE) */
 	size_t mountpoint_len;         /**< Store mount point path length (SDE) */
 	/*struct tape_attr *t_attr;*/  /**< Tape Attribute data */
+	struct volume_lockbits lockbits; /**< Volume lock state structure*/
 };
 
 struct ltfs_label {
@@ -465,6 +511,7 @@ struct ltfs_index {
 	char *creator;                      /**< Program that wrote this index */
 	char vol_uuid[37];                  /**< LTFS volume UUID */
 	char *volume_name;                  /**< human-readable volume name */
+	char *volumelockstate;				/**< volume lock state stored in index */
 	unsigned int generation;            /**< last generation number written to tape */
 	struct ltfs_timespec mod_time;      /**< time of last modification */
 	struct tape_offset selfptr;         /**< self-pointer (where this index was recovered from tape) */
@@ -626,6 +673,7 @@ int ltfs_set_compression(bool enable_compression, struct ltfs_volume *vol);
 int ltfs_set_barcode(const char *barcode, struct ltfs_volume *vol);
 int ltfs_validate_barcode(const char *barcode);
 int ltfs_set_volume_name(const char *volname, struct ltfs_volume *vol);
+int ltfs_set_volume_lockstate(struct ltfs_volume *vol, mam_lockval vol_lockstate, bool isdirty);
 int ltfs_set_partition_map(char dp, char ip, int dp_num, int ip_num, struct ltfs_volume *vol);
 int ltfs_reset_capacity(bool reset, struct ltfs_volume *vol);
 int ltfs_write_label(tape_partition_t partition, struct ltfs_volume *vol);
@@ -677,11 +725,22 @@ void ltfs_recover_eod_simple(struct ltfs_volume *vol);
 int ltfs_print_device_list(struct tape_ops *ops);
 void ltfs_enable_livelink_mode(struct ltfs_volume *vol);
 
-int ltfs_update_mam_attributes(struct ltfs_volume *vol);
 int mkdir_p(const char *path, mode_t mode);
 
 int ltfs_string_toupper(char *barcode);
 int ltfs_get_tape_logically_readonly(struct ltfs_volume *vol);
+
+/* Functions related to bitfield operation in Volume Advisory Locking */
+int ltfs_update_bitfield(struct ltfs_volume *vol, set_bits bits);
+bool ltfs_find_lockbit(struct ltfs_volume *vol, unsigned lockstate);
+int ltfs_get_bitfield_info(struct ltfs_volume *vol, set_bits bits);
+int ltfs_set_bitfield(struct ltfs_volume *vol, set_bits bits);
+int ltfs_update_volumelockstate(struct ltfs_volume *vol);
+unsigned ltfs_retreive_bitfield(struct ltfs_volume *vol);
+int ltfs_get_physically_write_protected(struct ltfs_volume *vol);
+int ltfs_mount_latest_index_either_partition(struct ltfs_volume *vol);
+int ltfs_set_archivemanager_media_readonly(struct ltfs_volume *vol);
+int ltfs_get_archivemanager_media(struct ltfs_volume *vol);
 
 #ifdef __cplusplus
 }

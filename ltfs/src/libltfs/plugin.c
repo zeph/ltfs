@@ -117,7 +117,7 @@ int plugin_load(struct libltfs_plugin *pl, const char *type, const char *name,
 
 	if (! get_ops) {
 		ltfsmsg(LTFS_ERR, "11263E", dlerror());
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 		/* Get rid of compiler warning for not checking the result*/
 		(void)dlclose(pl->lib_handle);
 #else
@@ -144,7 +144,7 @@ int plugin_load(struct libltfs_plugin *pl, const char *type, const char *name,
 
 	if (! get_messages) {
 		ltfsmsg(LTFS_ERR, "11284E", dlerror());
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 		/* Get rid of compiler warning for not checking the result*/
 		(void)dlclose(pl->lib_handle);
 #else
@@ -158,7 +158,7 @@ int plugin_load(struct libltfs_plugin *pl, const char *type, const char *name,
 	pl->ops = get_ops();
 	if (! pl->ops) {
 		ltfsmsg(LTFS_ERR, "11264E");
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 		/* Get rid of compiler warning for not checking the result*/
 		(void)dlclose(pl->lib_handle);
 #else

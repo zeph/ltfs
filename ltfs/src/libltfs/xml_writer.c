@@ -61,11 +61,11 @@
 #include "arch/time_internal.h"
 
 /* fsync emulation for MinGW */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 #include <windows.h>
 #define HAVE_FSYNC 1
 #define fsync(fd) (FlushFileBuffers ((HANDLE) _get_osfhandle(fd)) ? 0 : -1)
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
 /**
  * Format a raw timespec structure for the XML file.
@@ -120,7 +120,7 @@ int xml_output_tape_write_callback(void *context, const char *buffer, int len)
 		do {
 			copy_count = ctx->buf_size - ctx->buf_used;
 			memcpy(ctx->buf + ctx->buf_used, buffer + (len - bytes_remaining), copy_count);
-			ret = tape_write(ctx->device, ctx->buf, ctx->buf_size, true, true);
+			ret = tape_write(ctx->device, ctx->buf, ctx->buf_size, ctx->is_index_part, true, true);
 			if (ret < 0) {
 				ltfsmsg(LTFS_ERR, "17060E", (int)ret);
 				return -1;
@@ -146,7 +146,9 @@ int xml_output_tape_close_callback(void *context)
 	struct xml_output_tape *ctx = context;
 
 	if (ctx->buf_used > 0)
-		ret = tape_write(ctx->device, ctx->buf, ctx->buf_used, true, true);
+	{
+		ret = tape_write(ctx->device, ctx->buf, ctx->buf_used, ctx->is_index_part, true, true);
+	}
 	else
 		ret = 0;
 	if (ret < 0)

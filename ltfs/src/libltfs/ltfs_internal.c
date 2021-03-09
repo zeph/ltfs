@@ -45,7 +45,7 @@
 **
 *************************************************************************************
 **
-**  (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+**  (C) Copyright 2015, 2016 Hewlett Packard Enterprise Development LP
 **  07/24/12 Fixed handling of inconsistent indexes in ltfs_read_index(), which was
 **           leading to skipping some entries during index traversal from ltfsck.
 **
@@ -175,6 +175,8 @@ void _ltfs_index_free(bool force, struct ltfs_index **index)
 			free((*index)->commit_message);
 		if ((*index)->volume_name)
 			free((*index)->volume_name);
+		if ((*index)->volumelockstate)
+			free((*index)->volumelockstate);
 		if ((*index)->creator)
 			free((*index)->creator);
 		if ((*index)->symerr_count > 0)
@@ -282,7 +284,7 @@ int ltfs_read_one_label(tape_partition_t partition, struct ltfs_label *label,
 	} else
 		bufsize = LTFS_LABEL_MAX;
 
-	/* HP-SOS doesn't use the CRC bits. This code is non-functional. */
+	/* HPE-SOS doesn't use the CRC bits. This code is non-functional. */
 #if 0
 	buf = calloc(1, bufsize + LTFS_CRC_SIZE);
 #endif /* 0 */
@@ -399,7 +401,7 @@ out_free:
  * @return 0 on success, 1 if index file does not end with a file mark (but is otherwise valid),
  *         or a negative value on error.
  *
- * Modified HP July 2012.  Previously if there was an index but it had some inconsistency 
+ * Modified HPE July 2012.  Previously if there was an index but it had some inconsistency
  *  (for example a corrupt back pointer), this routine exited without the final space 1FM Fwd.
  *  That meant that when traversing indexes during an ltfsck operation, we were going back
  *  one FM too far and hence didn't find that index entry.
@@ -565,6 +567,16 @@ int ltfs_seek_index(char partition, tape_block_t *eod_pos, tape_block_t *index_e
 			check_err(tape_get_position(vol->device, &pos), "11200E", out);
 			*index_end_pos = pos.block;
 			*blocks_after = ! (pos.block == eod.block);
+
+                /* 
+                 * CR 10930 - if we ran out of memory or mutexes whilst trying to read the
+                 *  index, return an error...
+                 */
+                } else if (ret == -LTFS_NO_MEMORY) {
+                  // OutputDebugString ("Cannot seek to index, we ran out of resources!");
+                  goto out;
+
+
 		} else { /* no index file found: go back 2 file marks and try again */
 			ltfsmsg(LTFS_DEBUG, "11204D");
 			if (!vol->ignore_wrong_version && ret == -LTFS_UNSUPPORTED_INDEX_VERSION)
@@ -807,7 +819,7 @@ int _ltfs_populate_lost_found(char partition, tape_block_t part_lastref,
 		ltfs_set_index_dirty(true, false, vol->index);
 	}
 
-	/* HP-SOS doesn't use the CRC bits. This code is non-functional. */
+	/* HPE-SOS doesn't use the CRC bits. This code is non-functional. */
 #if 0
 	buf = malloc(vol->label->blocksize + LTFS_CRC_SIZE);
 #endif /* 0 */

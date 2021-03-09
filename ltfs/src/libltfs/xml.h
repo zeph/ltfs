@@ -48,6 +48,11 @@
 **                  lucasvr@us.ibm.com
 **
 *************************************************************************************
+**
+**  (C) Copyright 2015 - 2017 Hewlett Packard Enterprise Development LP
+**  10/13/17 Added support for SNIA 2.4
+**
+*************************************************************************************
 */
 
 #ifndef __xml_h
@@ -75,6 +80,8 @@ struct xml_output_tape {
 	char *buf;                  /**< 1-block output buffer. */
 	uint32_t buf_size;          /**< Output buffer size. */
 	uint32_t buf_used;          /**< Current output buffer usage. */
+    bool is_index_part;        // HPE MD 28.09.2017 Added for support of SNIA 2.4 (need a way to tell which partition
+	                            // fails a permenent write error)
 };
 int xml_output_tape_write_callback(void *context, const char *buffer, int len);
 int xml_output_tape_close_callback(void *context);
@@ -255,7 +262,9 @@ int xml_reader_read(xmlTextReaderPtr reader);
 
 /* Value parsers */
 int xml_parse_uuid(char *out_val, const char *val);
-int xml_parse_filename(char **out_val, const char *value);
+// HPE MD 22.09.2017 new function as file / dir names are processed slightly differently from xattr names
+int xml_parse_filename(char **out_val, const char *value, int percentencoded);
+int xml_parse_xattrname(char **out_val, const char *value, int percentencoded);
 int xml_parse_ll(long long *out_val, const char *val);
 int xml_parse_ull(unsigned long long *out_val, const char *val);
 int xml_parse_xll(unsigned long long *out_val, const char *val);

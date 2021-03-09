@@ -48,6 +48,11 @@
 **                  lucasvr@us.ibm.com
 **
 *************************************************************************************
+**
+**  (C) Copyright 2015 - 2017 Hewlett Packard Enterprise Development LP
+**  10/13/17 Added support for SNIA 2.4
+**
+*************************************************************************************
 */
 
 #include "ltfs.h"
@@ -87,7 +92,11 @@ int ltfs_fsraw_open(const char *path, bool open_write, struct dentry **d, struct
 		uint64_t max_filesize = index_criteria_get_max_filesize(vol);
 		acquirewrite_mrsw(&dtmp->meta_lock);
 		if (! dtmp->matches_name_criteria && max_filesize > 0 && dtmp->size <= max_filesize)
-			dtmp->matches_name_criteria = index_criteria_match(dtmp, vol);
+		{
+		   dtmp->matches_name_criteria = index_criteria_match(dtmp, vol);
+		}
+		// HPE MD 12.10.2017 When a file is open flag it until it is closed.  To complie with SNIA 2.4.
+		dtmp->openforwrite = true;	
 		releasewrite_mrsw(&dtmp->meta_lock);
 	}
 
@@ -100,9 +109,13 @@ int ltfs_fsraw_close(struct dentry *d)
 {
 	CHECK_ARG_NULL(d, -LTFS_NULL_ARG);
 	if (dcache_initialized(d->vol))
+	{
 		dcache_close(d, true, true, d->vol);
+	}
 	else
+	{	
 		fs_release_dentry(d);
+	}
 	return 0;
 }
 
@@ -116,6 +129,8 @@ int _ltfs_fsraw_write_data_unlocked(char partition, const char *buf, size_t coun
 	tape_block_t *startblock, struct ltfs_volume *vol)
 {
 	int ret;
+	uint32_t idx_part;
+	bool is_index_part = false;
 	uint64_t blocksize, rep_count;
 	size_t to_write, write_count = 0;
 	ssize_t nwrite_last;
@@ -198,6 +213,13 @@ int _ltfs_fsraw_write_data_unlocked(char partition, const char *buf, size_t coun
 	/* Tell the caller about the first block written */
 	if (startblock)
 		*startblock = start.block;
+   
+   idx_part = ltfs_part_id2num(ltfs_ip_id(vol), vol);
+   
+   if (idx_part == vol->device->position.partition)
+   {
+       is_index_part = true;
+   }
 
 	/* write blocks to tape */
 	for (rep_count = 0; rep_count < repetitions; ++rep_count) {
@@ -205,7 +227,7 @@ int _ltfs_fsraw_write_data_unlocked(char partition, const char *buf, size_t coun
 		while (write_count < count) {
 			to_write = (count - write_count > blocksize) ? blocksize : count - write_count;
 			/* Passed ignore_nospc = true to allow retries for -ENOSPC */
-			nwrite_last = tape_write(vol->device, buf + write_count, to_write, false, true);
+			nwrite_last = tape_write(vol->device, buf + write_count, to_write, is_index_part, false, true);
 			if (nwrite_last < 0) {
 				ret = nwrite_last;
 				ltfsmsg(LTFS_ERR, "11072E", ret);

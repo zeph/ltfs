@@ -1,12 +1,12 @@
-# RPM specification file for LTFS.
-Summary: Linear Tape File System (LTFS) - Version 3.0.0
-Name: ltfs		
-Version: 3.0.0	
-Release: 47
+# RPM specification file for HPE SOS.
+Summary: HPE StoreOpen Software (HPE-SOS) - Version 3.4.2
+Name: HPE-SOS		
+Version: 3.4.2
+Release: 9
 Group: Util
 License: LGPL	
-Vendor: LTFS
-Source0: ltfs_300_47.tar.gz
+Vendor: HPE
+Source0: HPE_LTFS_3.4.2_BUILD9
 Prereq: /sbin/ldconfig, /usr/bin/awk
 Requires:  fuse >= 2.8.4
 Requires:  libxml2 >= 2.6.16
@@ -26,7 +26,7 @@ BuildRoot: /tmp/rpm/%{name}-%{version}
 #AutoReqProv: no
 
 %description
-The LTFS software application is an open-source tape file system
+The HPE LTFS software application is an open-source tape file system
 implemented on dual partition tape drives.
 
 %prep
@@ -83,6 +83,8 @@ cp $RPM_BUILD_ROOT$RPM_BUILD_ROOT/ltfs.conf $RPM_BUILD_ROOT%{_prefix}%{_sysconf}
 # echo "/usr/local/lib64" >> $RPM_BUILD_ROOT%{_sysconf}/ld.so.conf.d/%{name}.conf
 echo "%{_libdir}" > $RPM_BUILD_ROOT%{_sysconf}/ld.so.conf.d/%{name}.conf
 cp %{_prefix}/bin/ltfscopy $RPM_BUILD_ROOT%{_prefix}/bin/
+cp %{_prefix}/bin/ltfslock $RPM_BUILD_ROOT%{_prefix}/bin/
+cp %{_prefix}/bin/latte $RPM_BUILD_ROOT%{_prefix}/bin/
 
 %post
 /sbin/ldconfig
@@ -100,6 +102,8 @@ cp %{_prefix}/bin/ltfscopy $RPM_BUILD_ROOT%{_prefix}/bin/
 %{_prefix}/bin/mkltfs
 %{_prefix}/bin/unltfs
 %{_prefix}/bin/ltfscopy
+%{_prefix}/bin/ltfslock
+%{_prefix}/bin/latte
 %{_libdir}/libltfs.a
 %{_libdir}/libltfs.la
 %{_libdir}/libltfs.so
@@ -115,5 +119,8 @@ cp %{_prefix}/bin/ltfscopy $RPM_BUILD_ROOT%{_prefix}/bin/
 %config /etc/ld.so.conf.d/%{name}.conf
 
 %changelog
-* Wed May 11 2015 Murali <murali.vuppalapati@hp.com>
-- update to 3.0.0
+* Thu May 25 2017 Martind <martin.dyer@hpe.com>
+- update to 3.3.0
+
+* Wed May 11 2015 Murali <murali.vuppalapati@hpe.com>
+- update to 3.2.0

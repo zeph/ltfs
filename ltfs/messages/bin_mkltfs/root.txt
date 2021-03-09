@@ -128,7 +128,10 @@ root:table {
 		15420I:string { "  -f, --force               Force to format medium" }
 		15421I:string { "      --kmi-backend=<name>  Use the specified key manager interface backend (default: %s)" }
 		
-		// Hewlett-Packard additions
+		// Hewlett Packard Enterprise additions
+		15488E:string { "Unable to format volume belonging to Archive Manager spanned set" }
+		15489E:string { "Unable to unformat volume belonging to Archive Manager spanned set" }
+		
 		15490E:string { "Tape already contains an LTFS volume.  Need -f option to force reformat" }
 		15491I:string { "  -f, --force               Force reformat of existing LTFS volume (normally prevented)" }
 		15422I:string { "      --syslogtrace         Enable diagnostic output to stderr and syslog" } // 2.2.0.2

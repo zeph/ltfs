@@ -53,7 +53,8 @@
 ** 
 ************************************************************************************* 
 **
-**  (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+**  (C) Copyright 2015 - 2017 Hewlett Packard Enterprise Development LP
+**  10/13/17 Added support for SNIA 2.4
 **
 *************************************************************************************
 */
@@ -309,8 +310,10 @@ int xml_parse_uuid(char *out_val, const char *val)
  * @param out_val On success, points to a newly allocated buffer holding the normalized name.
  * @param value Name to process.
  * @return 0 on success or a negative value on error.
+ * HPE MD 21.09.2017 xattr names are no longer checked the same as file and directory names as
+ * from SNIA 2.4 / is allowed in xattr name.  New function below to cover this.
  */
-int xml_parse_filename(char **out_val, const char *value)
+int xml_parse_filename(char **out_val, const char *value, int percentencoded)
 {
 	int ret;
 
@@ -322,14 +325,44 @@ int xml_parse_filename(char **out_val, const char *value)
 		ltfsmsg(LTFS_ERR, "17030E", value);
 		return ret;
 	}
-	else if (pathname_validate_file(*out_val) < 0) {
-		ltfsmsg(LTFS_ERR, "17031E", value);
+	else if (pathname_validate_file(*out_val, percentencoded) < 0) {
+		ltfsmsg(LTFS_ERR, "17031E", "file / dir name", value);
 		free(*out_val);
 		*out_val = NULL;
 		return -1;
 	}
 
 	return 0;
+}
+
+/**
+* HPE new function to support SNIA 2.4
+* Parse an xattr name. The name is normalized to NFC and checked for
+* length and invalid characters.
+* @param out_val On success, points to a newly allocated buffer holding the normalized name.
+* @param value Name to process.
+* @return 0 on success or a negative value on error.
+*/
+int xml_parse_xattrname(char **out_val, const char *value, int percentencoded)
+{
+    int ret;
+
+    CHECK_ARG_NULL(out_val, -LTFS_NULL_ARG);
+    CHECK_ARG_NULL(value, -LTFS_NULL_ARG);
+
+    ret = pathname_normalize(value, out_val);
+    if (ret < 0) {
+        ltfsmsg(LTFS_ERR, "17030E", value);
+        return ret;
+    }
+    else if (pathname_validate_xattr_name(*out_val, percentencoded) < 0) {
+        ltfsmsg(LTFS_ERR, "17031E", "xattr name", value);
+        free(*out_val);
+        *out_val = NULL;
+        return -1;
+    }
+
+    return 0;
 }
 
 /**

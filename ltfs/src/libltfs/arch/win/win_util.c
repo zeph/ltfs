@@ -61,7 +61,7 @@
 #include <objbase.h>
 #include <cguid.h>
 
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 #include <stddef.h>
 #include <dirent.h>
 /* 
@@ -143,7 +143,7 @@ int setenv(const char *name, const char *value, int overwrite )
 
 int unsetenv( const char *name )
 {
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 	/* Fix compiler warning */
 	FreeEnvironmentStrings( (LPCH)name );
 #else
@@ -350,7 +350,7 @@ struct tm *gmtime_libltfs(const time_t *timep, struct tm *result)
  * Our MinGW environment has no scandir, so create one
  *  
  */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 int scandir(const char *dirp,
 		struct dirent ***namelist,
 		int (*filter)(const struct dirent *entry),

@@ -49,7 +49,7 @@
 **
 *************************************************************************************
 **
-**  (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+**  (C) Copyright 2015-2017 Hewlett Packard Enterprise Development LP
 **  06/10/10 Reference PACKAGE_OWNER (from ltfs.h) in ltfs_volume_alloc rather than
 **            using a hardcoded value
 **  07/06/10 Extended handling of ENOSPC to permit current file to complete writing
@@ -61,6 +61,8 @@
 **  07/09/13 Do not unload in ltfs_recover_eod_simple because it is unnecessary and
 **            breaks the recovery process by kicking the tape right out
 **  03/25/14 In mkdir_p, convert \ to / so that loop iterates properly on Windows
+**  06/16/17 In mkdir_p, return -1 on failure not 1 since caller looks for (< 0)
+**  10/13/17 Added support for SNIA 2.4
 **
 *************************************************************************************
 **
@@ -81,7 +83,7 @@
  * defined. Strange, yes, but true 
  *  
  */
-#if defined(HP_mingw_BUILD) && defined(__MINGW32__)
+#if defined(HPE_mingw_BUILD) && defined(__MINGW32__)
 
 #undef __MINGW32__
 #include <unicode/uclean.h>
@@ -89,7 +91,7 @@
 
 #else 
 #include <unicode/uclean.h>
-#endif /* #if defined(HP_mingw_BUILD) && defined(__MINGW32__) */
+#endif /* #if defined(HPE_mingw_BUILD) && defined(__MINGW32__) */
 
 #endif
 
@@ -122,10 +124,10 @@
  * Linker complains about too many definitions of copyright if
  * this is not left out of the build
  */
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 volatile char *copyright = LTFS_COPYRIGHT_0"\n"LTFS_COPYRIGHT_1"\n"LTFS_COPYRIGHT_2"\n" \
 	LTFS_COPYRIGHT_3"\n"LTFS_COPYRIGHT_4"\n"LTFS_COPYRIGHT_5"\n";
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
 /** \file
  * The typical use case for this library is as follows.
@@ -404,7 +406,17 @@ int ltfs_volume_alloc(const char *execname, struct ltfs_volume **volume)
 		}
 	}
 
+	/* Initialize the volume advisory locking bitfield*/
+	newvol->lockbits.bitfield = 0x00;
+	ret = ltfs_thread_mutex_init(&newvol->lockbits.lock_bitfield);
+	if (ret) {
+		ltfsmsg(LTFS_ERR, "10002E", ret);
+		ret = -LTFS_MUTEX_INIT;
+		goto out_lockfree;
+	}
+
 	*volume = newvol;
+
 	return 0;
 
 out_condfree:
@@ -569,21 +581,21 @@ int ltfs_setup_device(struct ltfs_volume *vol)
 		return ret;
 
 	/*
-	 * HP change: HP drives don't support the append only mode functionality.
+	 * HPE change: HP drives don't support the append only mode functionality.
 	 * All the options and messages related to that are disabled. Code remains
 	 * but is non-functional.
 	 */
 	if (vol->append_only_mode) {
-		/* ltfsmsg(LTFS_INFO, "17157I", "to append-only mode"); */
+		ltfsmsg(LTFS_INFO, "17157I", "to append-only mode");
 		ret = tape_enable_append_only_mode(vol->device, true);
 	} else {
 		/* Check write mode and reset to write-anywhere mode if required. */
-		/* ltfsmsg(LTFS_INFO, "17157I", "to write-anywhere mode"); */
+		ltfsmsg(LTFS_INFO, "17157I", "to write-anywhere mode");
 		ret = tape_get_append_only_mode_setting(vol->device, &enabled);
 		if (ret < 0)
 			return ret;
 		if (enabled) {
-			/* ltfsmsg(LTFS_INFO, "17157I", "from append-only mode to write-anywhere mode"); */
+			ltfsmsg(LTFS_INFO, "17157I", "from append-only mode to write-anywhere mode");
 			ret = tape_enable_append_only_mode(vol->device, false);
 		}
 	}
@@ -1426,7 +1438,7 @@ int ltfs_start_mount(bool trial, struct ltfs_volume *vol)
 			 * Make this a warning instead of an error. We log errors to the
 			 * event log and this just ends up being noise.
 			 */
-#ifndef HP_mingw_BUILD		
+#ifndef HPE_mingw_BUILD		
 			ltfsmsg(LTFS_ERR, "11006E");
 #else
 			ltfsmsg(LTFS_WARN, "11006E");
@@ -1643,6 +1655,8 @@ int ltfs_mount(bool force_full, bool deep_recovery, bool recover_extra, bool rec
 
 	ltfsmsg(LTFS_DEBUG, "11028D"); /* finished consistency check */
 
+
+
 	/* Make roll back mount if necessary */
 	INTERRUPTED_GOTO(ret, out_unlock);
 	vol->rollback_mount = false;
@@ -1806,7 +1820,18 @@ start:
 	if (ret == 0) {
 		if (vol->rollback_mount == false &&
 			 (ltfs_is_dirty(vol) || vol->index->selfptr.partition != ltfs_ip_id(vol))) {
-			ret = ltfs_write_index(ltfs_ip_id(vol), reason, vol);
+			/* If write error is set in MAM we are not writing the index in both partitions while unmounting
+			 * This is done to prevent writing the index when a cartridge with PWE set is mounted as read-only
+			 * with the latest index from either partition(For rollback mount same thing is done)*/
+			tape_get_MAMattributes(vol->device,
+								   TC_MAM_VOL_LOCK_STATE,
+								   ltfs_part_id2num(vol->label->partid_ip, vol),
+								   &vol->mam_attr);
+			if ( (vol->mam_attr.volumelockstate != PWE_MAM) && 
+                 (vol->mam_attr.volumelockstate != DPPWE_MAM) && 
+                 (vol->mam_attr.volumelockstate != IPPWE_MAM) &&
+                 (vol->mam_attr.volumelockstate != DP_IP_PWE_MAM) )
+				ret = ltfs_write_index(ltfs_ip_id(vol), reason, vol);
 			if (NEED_REVAL(ret)) {
 				ret = ltfs_revalidate(true, vol);
 				if (ret == 0) {
@@ -1916,6 +1941,8 @@ int ltfs_eject_tape(struct ltfs_volume *vol)
  * Returns -LTFS_WRITE_ERROR returns if a write error has previously occurred.
  * Returns -LTFS_NO_SPACE if IP or DP is in early warning zone.
  * Returns -LTFS_LESS_SPACE if DP is in programmable early warning zone.
+ * Returns -LTFS_VOLUME_DP_WRITEERRLOCKED if write error in data partition.
+ * Returns -LTFS_VOLUME_IP_WRITEERRLOCKED if write error in index partition.
  * @param vol LTFS volume
  * @return 0 if the device is writable or a negative value on error. In particular,
  *         -LTFS_NO_SPACE is returned if the specified partition is out of space,
@@ -1924,11 +1951,47 @@ int ltfs_eject_tape(struct ltfs_volume *vol)
  *         -LTFS_WRITE_ERROR is returned if a write error has previously occurred.
  *         Other negative values indicate an operational problem (could not get the read-only
  *         status).
+ *
+  * HPE MD 25.09.2017 Added support for SNIA 2.4.
  */
 int ltfs_get_tape_readonly(struct ltfs_volume *vol)
 {
 	int ret;
 	CHECK_ARG_NULL(vol, -LTFS_NULL_ARG);
+
+	/* Find out if the volume is locked/permanently locked or locked due to write error */
+	pthread_mutex_lock(& vol->lockbits.lock_bitfield);
+	if (ltfs_find_lockbit(vol, PWE)) 
+	{
+		ltfsmsg(LTFS_INFO, "17308I");
+		pthread_mutex_unlock(& vol->lockbits.lock_bitfield);
+		return -LTFS_VOLUME_WRITEERRLOCKED;
+	}
+	else if (ltfs_find_lockbit(vol, DPPWE)) 
+	{
+		ltfsmsg(LTFS_INFO, "17327I");
+		pthread_mutex_unlock(& vol->lockbits.lock_bitfield);
+		return -LTFS_VOLUME_DP_WRITEERRLOCKED;
+	}
+	else if (ltfs_find_lockbit(vol, IPPWE)) 
+	{
+		ltfsmsg(LTFS_INFO, "17328I");
+		pthread_mutex_unlock(& vol->lockbits.lock_bitfield);
+		return -LTFS_VOLUME_IP_WRITEERRLOCKED;
+	} 
+	else if (ltfs_find_lockbit(vol, LOCKED)) 
+	{
+		ltfsmsg(LTFS_INFO, "17305I");
+		pthread_mutex_unlock(& vol->lockbits.lock_bitfield);
+		return -LTFS_VOLUME_LOCKED;
+	} 
+	else if (ltfs_find_lockbit(vol, PERM_LOCKED)) 
+	{
+		ltfsmsg(LTFS_INFO, "17309I");
+		pthread_mutex_unlock(& vol->lockbits.lock_bitfield);
+		return -LTFS_VOLUME_PERMLOCKED;
+	}
+	pthread_mutex_unlock(& vol->lockbits.lock_bitfield);
 
 	ret = tape_read_only(vol->device, ltfs_part_id2num(ltfs_ip_id(vol), vol));
 	if (! ret || ret == -LTFS_LESS_SPACE)
@@ -1957,6 +2020,19 @@ int ltfs_get_tape_logically_readonly(struct ltfs_volume *vol)
 	return ret;
 }
 
+/*
+ * Check if a cartridge is locked using the latch
+ * @param vol LTFS volume
+ * @ret 1 for success else 0 for failure
+ */
+int ltfs_get_physically_write_protected(struct ltfs_volume *vol) {
+	int ret;
+	CHECK_ARG_NULL(vol, -LTFS_NULL_ARG);
+
+	ret = tape_get_physically_write_protected(vol->device);
+
+	return ret;
+}
 /**
  * Check whether the specified partition has additional space to write. Also check whether
  * the tape is write-protected or not, just as ltfs_get_tape_read_only() does.
@@ -2218,7 +2294,7 @@ int ltfs_write_index(char partition, char *reason, struct ltfs_volume *vol)
 	immed = (strcmp(reason, SYNC_FORMAT) == 0);
 	ret = tape_write_filemark(vol->device, 1, true, true, immed);
 
-#if (defined HP_BUILD) || (defined QUANTUM_BUILD) || (defined GENERIC_OEM_BUILD)
+#if (defined HPE_BUILD) || (defined QUANTUM_BUILD) || (defined GENERIC_OEM_BUILD)
 	/*
 	 * Write 0 filemarks to flush the buffer to tape, to ensure that the
 	 *  Volume Change Reference value has been updated before we update the
@@ -2251,7 +2327,7 @@ int ltfs_write_index(char partition, char *reason, struct ltfs_volume *vol)
 	ltfs_update_cart_coherency(vol);
 
 	/* Updating the MAM attribute ltfs.ApplicationFormatVersion */
-	ret = tape_update_mam_attributes(vol->device, NULL, TC_MAM_APP_FORMAT_VERSION, NULL);
+	ret = tape_update_mam_attributes(vol->device, NULL, TC_MAM_APP_FORMAT_VERSION, NULL, NOLOCK_MAM);
 	if (! ret) {
 		ret = tape_get_MAMattributes(vol->device, TC_MAM_APP_FORMAT_VERSION,
 				ltfs_part_id2num(vol->label->partid_ip, vol), &vol->mam_attr);
@@ -2506,7 +2582,9 @@ int ltfs_set_volume_name(const char *volname, struct ltfs_volume *vol)
 	CHECK_ARG_NULL(vol, -LTFS_NULL_ARG);
 
 	if (volname) {
-		ret = pathname_validate_file(volname);
+		// HPE MD 22.09.2017 function was changed for SNIA 2.4 extra param 0 
+		// will cause function to perform as before.
+		ret = pathname_validate_file(volname, 0);
 		if (ret < 0)
 			return ret;
 		name_dup = strdup(volname);
@@ -2544,6 +2622,38 @@ int ltfs_set_volume_name(const char *volname, struct ltfs_volume *vol)
 	ltfs_set_index_dirty(false, false, vol->index);
 	ltfs_mutex_unlock(&vol->index->dirty_lock);
 	releaseread_mrsw(&vol->lock);
+	return 0;
+}
+
+/**
+ * Set volume lock state to unlocked during format (mkltfs).
+ * @param vol LTFS volume.
+ * @return 0 on success or a negative value on error.
+ */
+int ltfs_set_volume_lockstate(struct ltfs_volume *vol, mam_lockval vol_lockstate, bool isdirty)
+{
+	CHECK_ARG_NULL(vol, -LTFS_NULL_ARG);
+
+	if (vol->index->volumelockstate)
+		free(vol->index->volumelockstate);
+
+	if (vol_lockstate == UNLOCKED_MAM) {
+		vol->index->volumelockstate = (char *) calloc(1,
+				(strlen("unlocked") + 1));
+		strncpy(vol->index->volumelockstate, "unlocked", strlen("unlocked"));
+	} else if (vol_lockstate == LOCKED_MAM) {
+		vol->index->volumelockstate = (char *) calloc(1,
+				(strlen("locked") + 1));
+		strncpy(vol->index->volumelockstate, "locked", strlen("locked"));
+	} else if (vol_lockstate == PERMLOCKED_MAM) {
+		vol->index->volumelockstate = (char *) calloc(1,
+				(strlen("permlocked") + 1));
+		strncpy(vol->index->volumelockstate, "permlocked", strlen("permlocked"));
+	}
+
+	if (isdirty) {
+		ltfs_set_index_dirty(true, false, vol->index);
+	}
 	return 0;
 }
 
@@ -2596,7 +2706,7 @@ int ltfs_write_label(tape_partition_t partition, struct ltfs_volume *vol)
 {
 	int ret;
 	struct tc_position seekpos;
-	/* HP-SOS doesn't use the CRC bits. This code is non-functional. */
+	/* HPE-SOS doesn't use the CRC bits. This code is non-functional. */
 #if 0
 	char ansi_label[80 + LTFS_CRC_SIZE];
 #endif /* 0 */
@@ -2604,6 +2714,8 @@ int ltfs_write_label(tape_partition_t partition, struct ltfs_volume *vol)
 	char *buf;
 	xmlBufferPtr xml_buf;
 	ssize_t nw;
+	uint32_t idx_part;
+	bool is_index_part = false;
 
 	/* Seek to beginning of the specified partition */
 	seekpos.partition = partition;
@@ -2613,15 +2725,25 @@ int ltfs_write_label(tape_partition_t partition, struct ltfs_volume *vol)
 		ltfsmsg(LTFS_ERR, "11101E", ret, partition);
 		return ret;
 	}
+	
+	// HPE MD 28.09.2017 This has probably been established above but as I am unsure of some of this
+	// I would rather replicate and know I am identifying the correct partition.
+   
+   idx_part = ltfs_part_id2num(ltfs_ip_id(vol), vol);
+   
+   if (idx_part == vol->device->position.partition)
+   {
+      is_index_part = true;
+   }
 
 	/* Write ANSI label */
-	/* HP-SOS doesn't use the CRC bits. This code is non-functional. */
+	/* HPE-SOS doesn't use the CRC bits. This code is non-functional. */
 #if 0
 	label_make_ansi_label(vol, ansi_label, sizeof(ansi_label) - LTFS_CRC_SIZE);
-	nw = tape_write(vol->device, ansi_label, sizeof(ansi_label) - LTFS_CRC_SIZE, true, false);
+	nw = tape_write(vol->device, ansi_label, sizeof(ansi_label) - LTFS_CRC_SIZE, is_index_part, true, false);
 #endif /* 0 */
 	label_make_ansi_label(vol, ansi_label, sizeof(ansi_label));
-	nw = tape_write(vol->device, ansi_label, sizeof(ansi_label), true, false);
+	nw = tape_write(vol->device, ansi_label, sizeof(ansi_label), is_index_part, true, false);
 	if (nw < 0) {
 		ltfsmsg(LTFS_ERR, "11102E", (int)nw, partition);
 		return nw;
@@ -2640,7 +2762,7 @@ int ltfs_write_label(tape_partition_t partition, struct ltfs_volume *vol)
 		return -LTFS_NO_MEMORY; /* TODO: this is the most likely error, but not the only possible one */
 	}
 
-	/* HP-SOS doesn't use the CRC bits. This code is non-functional. */
+	/* HPE-SOS doesn't use the CRC bits. This code is non-functional. */
 #if 0
 	buf = calloc(1, xmlBufferLength(xml_buf) + LTFS_CRC_SIZE);
 #endif /* 0 */
@@ -2654,7 +2776,7 @@ int ltfs_write_label(tape_partition_t partition, struct ltfs_volume *vol)
 
 	memcpy(buf, (void *)xmlBufferContent(xml_buf), xmlBufferLength(xml_buf));
 
-	nw = tape_write(vol->device, buf, xmlBufferLength(xml_buf), true, false);
+	nw = tape_write(vol->device, buf, xmlBufferLength(xml_buf), is_index_part, true, false);
 	if (nw < 0) {
 		ltfsmsg(LTFS_ERR, "11106E", (int)nw, partition);
 		free(buf);
@@ -2744,7 +2866,7 @@ int ltfs_format_tape(struct ltfs_volume *vol)
 	INTERRUPTED_RETURN();
 	ltfsmsg(LTFS_INFO, "11097I");
 	ret = tape_format(vol->device, ltfs_part_id2num(vol->label->partid_ip, vol),
-			vol->index->volume_name, vol->label->barcode);
+			vol->index->volume_name, vol->label->barcode, vol->label->vol_uuid);
 	if (ret < 0) {
 		ltfsmsg(LTFS_ERR, "11098E", ret);
 		return ret;
@@ -3875,8 +3997,8 @@ void ltfs_recover_eod_simple(struct ltfs_volume *vol)
 	}
 
 	if (corrupted) {
-	/* HP Change - the unload is unnecessary with our drive and also causes problems */
-#if !(defined(HP_BUILD) || defined(GENERIC_OEM_BUILD) || defined(QUANTUM_BUILD))
+	/* HPE Change - the unload is unnecessary with our drive and also causes problems */
+#if !(defined(HPE_BUILD) || defined(GENERIC_OEM_BUILD) || defined(QUANTUM_BUILD))
 		tape_unload_tape(vol->device);
 #endif
 		tape_load_tape(vol->device, vol->kmi_handle);
@@ -3909,8 +4031,8 @@ int ltfs_print_device_list(struct tape_ops *ops)
 	ltfsresult("17073I");
 	c = MIN(info_count, (count * 2));
 	for (i = 0; i < c; i++)
-		if (buf[i].name && buf[i].vendor &&
-				buf[i].model && buf[i].serial_number && buf[i].product_name)
+		if (buf[i].name[0] && buf[i].vendor[0] &&
+				buf[i].model[0] && buf[i].serial_number[0] && buf[i].product_name[0])
 			ltfsresult("17074I", buf[i].name, buf[i].vendor,
 				buf[i].model, buf[i].serial_number, buf[i].product_name);
 	ret = 0;
@@ -3931,22 +4053,6 @@ void ltfs_enable_livelink_mode(struct ltfs_volume *vol)
 }
 
 /**
- * Update MAM attributes.
- * @param vol LTFS volume.
- * @return
- */
-int ltfs_update_mam_attributes(struct ltfs_volume *vol)
-{
-	int		status = -1;
-
-	CHECK_ARG_NULL(vol, -LTFS_NULL_ARG);
-
-	status = tape_update_mam_attributes(vol->device, vol->index->volume_name,0, NULL);
-
-	return status;
-}
-
-/**
  * Create directory with the specified mode
  * @path path of the directory to be created
  * @mode directory creation modes
@@ -3964,10 +4070,10 @@ int mkdir_p(const char *path, mode_t mode)
 		return 0;
 
 	/*
-	 * HP: convert forward-slash chars to back-slashes, so that the iterative mkdir works correctly
+	 * HPE: convert forward-slash chars to back-slashes, so that the iterative mkdir works correctly
 	 * on Windows
 	 */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 	ptr = buf;
 	while (*ptr != '\0') {
 		if (*ptr == '\\') {
@@ -3975,7 +4081,7 @@ int mkdir_p(const char *path, mode_t mode)
 		}
 		ptr++;
 	}
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
 	for (ptr = (buf[0] == '/') ? &buf[1] : buf; *ptr; ++ptr) {
 		bool last = ptr[1] == '\0';
@@ -3988,15 +4094,15 @@ int mkdir_p(const char *path, mode_t mode)
 			 * In our MinGW environment, mkdir takes one param
 			 */
 			/* TODO: No difference in the code for the two builds. Verify this. */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 			ret = mkdir(buf, mode);
 #else
 			ret = mkdir(buf, mode);
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
 			if (ret && errno != EEXIST) {
 				ltfsmsg(LTFS_ERR, "9014E", path, strerror(errno));
-				return 1;
+				return -1;  /* HPE: return -1 not 1 since caller treats <0 as failure */
 			}
 			if (!last)
 				*(ptr++) = '/';
@@ -4005,5 +4111,522 @@ int mkdir_p(const char *path, mode_t mode)
 	return 0;
 }
 
+/**
+ * This function updates the bitfield used for volume advisory locking status
+ * and is called during mounting of the LTFS VOLUME
+ *
+
+ * @vol address of the LTFS volume structure
+ * @bits the type of locking to be set in bitfield
+ *
+ * HPE MD 25.09.2017 Added support for SNIA 2.4
+ */
+int ltfs_update_bitfield(struct ltfs_volume *vol, set_bits bits)
+{
+
+	CHECK_ARG_NULL(vol, -LTFS_NULL_ARG);
+
+    /* Setting up the bitfield */
+    switch (bits) {
+
+        case UNLOCKED:
+            vol->lockbits.bitfield = (vol->lockbits.bitfield | UNLOCKED);
+
+            break;
+        case LOCKED:
+        	vol->lockbits.bitfield =  (vol->lockbits.bitfield | LOCKED);
+
+            break;
+        case PERM_LOCKED:
+        	vol->lockbits.bitfield =  (vol->lockbits.bitfield | PERM_LOCKED);
+
+            break;
+        case PHY_WRITE_PRTCT:
+        	vol->lockbits.bitfield =  (vol->lockbits.bitfield | PHY_WRITE_PRTCT);
+
+            break;
+        case PRMWP:
+        	vol->lockbits.bitfield =  (vol->lockbits.bitfield | PRMWP);
+
+            break;
+        case PERSWP:
+        	vol->lockbits.bitfield =  (vol->lockbits.bitfield | PERSWP);
+
+            break;
+        case PWE:
+        	vol->lockbits.bitfield =  (vol->lockbits.bitfield | PWE);
+        	vol->lockbits.bitfield =  (vol->lockbits.bitfield | LOCKED);
+
+            break;
+        case DPPWE:
+        	vol->lockbits.bitfield =  (vol->lockbits.bitfield | DPPWE);
+        	vol->lockbits.bitfield =  (vol->lockbits.bitfield | LOCKED);
+
+            break;
+        case IPPWE:
+        	vol->lockbits.bitfield =  (vol->lockbits.bitfield | IPPWE);
+        	vol->lockbits.bitfield =  (vol->lockbits.bitfield | LOCKED);
+
+            break;
+        default:
+
+            break;
+    }
+
+	return 0;
+}
+
+/*
+ * Find out the lock state of the volume.The function should be called
+ * using the vol->lockbits.lock_bitfield mutex lock and the lock should
+ * only be released once the operation related to the lockbit is over
+ *
+ * @vol address of the LTFS volume structure
+ * @lockstate lockstate to find from the bitfield
+ * @return the value is TRUE if particular state is set else FALSE
+ *
+ * MD 25.09.2017 Added support for SNIA 2.4
+ */
+bool ltfs_find_lockbit(struct ltfs_volume *vol, unsigned lockstate)
+{
+	bool bitstate = FALSE;
+	unsigned bitfield = 0x00;
+
+	CHECK_ARG_NULL(vol, -LTFS_NULL_ARG);
+
+	bitfield = vol->lockbits.bitfield;
+
+	if (lockstate == UNLOCKED) 
+	{
+		if (! (bitfield & LOCKED))
+		{   
+			bitstate = TRUE;
+		}	
+	} 
+	else if (lockstate == PWE)	
+	{
+		if ((bitfield & lockstate) && (bitfield & LOCKED))
+	   {
+			bitstate = TRUE;
+		}	
+	}
+	else if (lockstate == DPPWE)	
+	{
+		if ((bitfield & lockstate) && (bitfield & LOCKED))
+	   {
+			bitstate = TRUE;
+		}	
+	}
+	else if (lockstate == IPPWE)	
+	{
+		if ((bitfield & lockstate) && (bitfield & LOCKED))
+	   {
+			bitstate = TRUE;
+		}	
+	} 
+	else 
+	{
+		if (bitfield & lockstate)
+		{
+			bitstate = TRUE;
+		}	
+	}
+
+	return bitstate;
+}
+/**
+ * This function finds out if a particular value can be set in the bitfield
+ * considering various criteria
+ * This function should be called using the vol->lockbits.lock_bitfield
+ * mutex lock and the lock should only be released once the operation
+ * related to the lockbit is over
+ * @vol address of the LTFS volume structure
+ * @bits the type of locking to be set in bitfield
+ */
+int ltfs_get_bitfield_info(struct ltfs_volume *vol, set_bits bits)
+{
+	int status = 0;
+	unsigned bitfield = 0x00;
+
+	CHECK_ARG_NULL(vol, -LTFS_NULL_ARG);
+
+	bitfield = ltfs_retreive_bitfield(vol);
+
+	switch (bits) {
+
+		/* Check if the cartridge can be unlocked */
+	    case UNLOCKED:
+
+	    	if (! ltfs_find_lockbit(vol, PERM_LOCKED)
+	    			&& ! ltfs_find_lockbit(vol, PHY_WRITE_PRTCT)
+					&& ! ltfs_find_lockbit(vol, PWE)
+					&& ! ltfs_find_lockbit(vol, DPPWE)
+					&& ! ltfs_find_lockbit(vol, IPPWE)
+					&& ! ltfs_find_lockbit(vol, PRMWP)
+					&& ! ltfs_find_lockbit(vol, PERSWP)
+					&& (ltfs_find_lockbit(vol, UNLOCKED) || ltfs_find_lockbit(vol, LOCKED))) {
+
+	    		ltfsmsg(LTFS_INFO, "17310I");
+	    	} else {
+	    		status = -1;
+	    		ltfsmsg(LTFS_ERR, "17311E",bitfield);
+	    	}
+
+	         break;
+	    /* Check if the cartridge can be locked */
+	    case LOCKED:
+
+	    	if (! ltfs_find_lockbit(vol, PERM_LOCKED)
+	    			&& ! ltfs_find_lockbit(vol, PHY_WRITE_PRTCT)
+					&& ! ltfs_find_lockbit(vol, PWE)
+					&& ! ltfs_find_lockbit(vol, DPPWE)
+					&& ! ltfs_find_lockbit(vol, IPPWE)
+					&& ! ltfs_find_lockbit(vol, PRMWP)
+					&& ! ltfs_find_lockbit(vol, PERSWP)
+					&& (ltfs_find_lockbit(vol, LOCKED) || ltfs_find_lockbit(vol, UNLOCKED))) {
+
+	    		ltfsmsg(LTFS_INFO, "17312I");
+	    	} else {
+	    		status = -1;
+	    		ltfsmsg(LTFS_ERR, "17313E",bitfield);
+	    	}
+
+	         break;
+	    /* Check if the cartridge can be permanently locked */
+	    case PERM_LOCKED:
+
+	    	if (! ltfs_find_lockbit(vol, PHY_WRITE_PRTCT)
+					&& ! ltfs_find_lockbit(vol, PWE)
+					&& ! ltfs_find_lockbit(vol, DPPWE)
+					&& ! ltfs_find_lockbit(vol, IPPWE)
+					&& ! ltfs_find_lockbit(vol, PRMWP)
+					&& ! ltfs_find_lockbit(vol, PERSWP)
+					&& 	(ltfs_find_lockbit(vol, PERM_LOCKED)
+						|| ltfs_find_lockbit(vol, LOCKED)
+						|| ltfs_find_lockbit(vol, UNLOCKED))) {
+
+	    		ltfsmsg(LTFS_INFO, "17314I");
+	    	} else {
+	    		status = -1;
+	    		ltfsmsg(LTFS_ERR, "17315E",bitfield);
+	    	}
+
+	         break;
+	    /* Check if the cartridge can be locked due to write error */
+	    case PWE:
+
+	    	if (! ltfs_find_lockbit(vol, PERM_LOCKED)
+	    			&& ! ltfs_find_lockbit(vol, PHY_WRITE_PRTCT)
+					&& ! ltfs_find_lockbit(vol, LOCKED)
+					&& ! ltfs_find_lockbit(vol, PRMWP)
+					&& ! ltfs_find_lockbit(vol, PERSWP)
+					&& ! ltfs_find_lockbit(vol, DPPWE)
+					&& ! ltfs_find_lockbit(vol, IPPWE)
+					&& (ltfs_find_lockbit(vol, PWE)
+					   || ltfs_find_lockbit(vol, UNLOCKED))) {
+	    		ltfsmsg(LTFS_INFO, "17316I");
+	    	} else {
+	    		status = -1;
+	    		ltfsmsg(LTFS_ERR, "17317E",bitfield);
+	    	}
+
+	         break;
+	    /* The below two cases ate currently not supported so skipping the implementation*/
+	    case PRMWP:
+
+	    	 break;
+
+	    case PERSWP:
+
+	    	 break;
+	    
+	    // HPE MD 25.09.2017 The following two cases added for support of SNIA 2.4 
+	    /* Check if the cartridge can be locked due to data partition write error */
+	    case DPPWE:
+
+	    	if (! ltfs_find_lockbit(vol, PERM_LOCKED)
+	    			&& ! ltfs_find_lockbit(vol, PHY_WRITE_PRTCT)
+					&& ! ltfs_find_lockbit(vol, LOCKED)
+					&& ! ltfs_find_lockbit(vol, PRMWP)
+					&& ! ltfs_find_lockbit(vol, PERSWP)
+					&& ! ltfs_find_lockbit(vol, PWE)
+					&& (ltfs_find_lockbit(vol, DPPWE)
+					   || ltfs_find_lockbit(vol, UNLOCKED))) {
+	    		ltfsmsg(LTFS_INFO, "17329I");
+	    	} else {
+	    		status = -1;
+	    		ltfsmsg(LTFS_ERR, "17331E",bitfield);
+	    	}
+
+	         break;
+	     /* Check if the cartridge can be locked due to index partition write error */
+	    case IPPWE:
+
+	    	if (! ltfs_find_lockbit(vol, PERM_LOCKED)
+	    			&& ! ltfs_find_lockbit(vol, PHY_WRITE_PRTCT)
+					&& ! ltfs_find_lockbit(vol, LOCKED)
+					&& ! ltfs_find_lockbit(vol, PRMWP)
+					&& ! ltfs_find_lockbit(vol, PERSWP)
+					&& ! ltfs_find_lockbit(vol, PWE)
+					&& (ltfs_find_lockbit(vol, IPPWE)
+					   || ltfs_find_lockbit(vol, UNLOCKED))) {
+	    		ltfsmsg(LTFS_INFO, "17330I");
+	    	} else {
+	    		status = -1;
+	    		ltfsmsg(LTFS_ERR, "17332E",bitfield);
+	    	}
+
+	         break;    	 
+	    default:
+
+	         break;
+	    }
+
+	return status;
+}
+
+/*
+ * This function sets the bitfield.
+ * The function should be called using the vol->lockbits.lock_bitfield mutex
+ * @vol address of the LTFS volume structure
+ * @bits the type of locking to be set in bitfield
+ * @return 0
+ */
+int ltfs_set_bitfield(struct ltfs_volume *vol, set_bits bits)
+{
+	CHECK_ARG_NULL(vol, -LTFS_NULL_ARG);
+
+	switch(bits) {
+		case UNLOCKED:
+
+			vol->lockbits.bitfield = (vol->lockbits.bitfield & 0xFE);
+			break;
+		case LOCKED:
+
+			vol->lockbits.bitfield = (vol->lockbits.bitfield | LOCKED);
+			break;
+		case PERM_LOCKED:
+
+			vol->lockbits.bitfield = (vol->lockbits.bitfield & 0xFE);
+			vol->lockbits.bitfield = (vol->lockbits.bitfield | PERM_LOCKED);
+			break;
+		case PWE:
+
+			vol->lockbits.bitfield = (vol->lockbits.bitfield | PWE);
+			vol->lockbits.bitfield = (vol->lockbits.bitfield | LOCKED);
+			break;
+		/* The below two cases are currently not supported so skipping the implementation*/
+		case PRMWP:
+
+			break;
+		case PERSWP:
+
+			break;
+			
+		// HPE MD 25.09.207 Added the following two conditions to support SNIA 2.4
+			
+		case DPPWE:
+
+			vol->lockbits.bitfield = (vol->lockbits.bitfield | DPPWE);
+			vol->lockbits.bitfield = (vol->lockbits.bitfield | LOCKED);
+			break;
+		case IPPWE:
+
+			vol->lockbits.bitfield = (vol->lockbits.bitfield | IPPWE);
+			vol->lockbits.bitfield = (vol->lockbits.bitfield | LOCKED);
+			break;		
+		default:
+
+			break;
+	}
+	return 0;
+}
+
+/**
+ * This function retrives the Volume Advisory Locking bitfield information
+ * This function should be called using the vol->lockbits.lock_bitfield
+ * mutex lock and the lock should only be released once the operation
+ * related to the lockbit is over
+ * @vol address of the LTFS volume structure
+ * @return Volume Advisory Locking bitfield
+ */
+unsigned ltfs_retreive_bitfield(struct ltfs_volume *vol)
+{
+	unsigned bitfield = 0x00;
+
+	bitfield = vol->lockbits.bitfield;
+
+	return bitfield;
+}
+
+/*
+ * This function will retreive the lockstate from MAM,Index,
+ * device parameters and update the bitfield.
+ * @vol address of the LTFS volume structure
+ * @ret 0
+ */
+int ltfs_update_volumelockstate(struct ltfs_volume *vol) {
+
+    unsigned char volumelockstate = 0x00;
+    unsigned char temp_volumelockstate = 0xFF;
+    int ret;
+
+    CHECK_ARG_NULL(vol, -LTFS_NULL_ARG);
+
+    /* Find out if the tape is physically or logically write protected
+     * and update the bitfield accordingly
+     */
+
+    if (ltfs_get_physically_write_protected(vol))
+        ltfs_update_bitfield(vol, PHY_WRITE_PRTCT);
+
+    /* Find out from MAM and index about the lockstate */
+    volumelockstate = vol->mam_attr.volumelockstate;
+
+    // HPE MD 26.09.2017 The following added to support SNIA 2.4.  It is possible
+    // that DPPWE and IPPWE could be set so need to check both and individually.
+
+    if (volumelockstate == DPPWE_MAM)
+    {
+        ltfsmsg(LTFS_INFO, "17333I");
+        ltfs_update_bitfield(vol, DPPWE);
+    }
+    else if (volumelockstate == IPPWE_MAM)
+    {
+        ltfsmsg(LTFS_INFO, "17334I");
+        ltfs_update_bitfield(vol, IPPWE);
+    }
+    else if (volumelockstate == DP_IP_PWE_MAM)
+    {
+        ltfsmsg(LTFS_INFO, "17335I");
+        ltfs_update_bitfield(vol, DPPWE);
+        ltfs_update_bitfield(vol, IPPWE);
+    }
+    else if (volumelockstate == PWE_MAM) {
+
+            ltfsmsg(LTFS_INFO, "17306I");
+            ltfs_update_bitfield(vol, PWE);
+	} else if (((vol->index->volumelockstate)
+            && (!strncmp(vol->index->volumelockstate, "unlocked", strlen("unlocked"))))
+            ){
+
+        ltfs_update_bitfield(vol, UNLOCKED);
+        temp_volumelockstate = UNLOCKED_MAM;
+    } else if (((vol->index->volumelockstate)
+            && (!strncmp(vol->index->volumelockstate, "locked", strlen("locked"))))
+            ) {
+
+        ltfsmsg(LTFS_INFO, "17305I");
+        ltfs_update_bitfield(vol, LOCKED);
+        temp_volumelockstate = LOCKED_MAM;
+    } else if (((vol->index->volumelockstate)
+            && (!strncmp(vol->index->volumelockstate, "permlocked", strlen("permlocked"))))
+            ) {
+
+        ltfsmsg(LTFS_INFO, "17307I");
+        ltfs_update_bitfield(vol, PERM_LOCKED);
+        temp_volumelockstate = PERMLOCKED_MAM;
+    }
+
+    if (temp_volumelockstate != 0xFF) {
+        ret = tape_device_lock(vol->device);
+        if (ret < 0) {
+            ltfsmsg(LTFS_ERR, "12010E", __FUNCTION__);
+            return ret;
+        }
+        ret = tape_update_mam_attributes(vol->device,
+                                     NULL,
+                                     TC_MAM_VOL_LOCK_STATE,
+                                     NULL,
+                                     temp_volumelockstate);
+        tape_device_unlock(vol->device);
+    }
+
+    return 0;
+}
+
+/*
+ * This function tries to find out the latest index from either partition and parse the same
+ * @vol address of the LTFS volume structure
+ * @return 0 for success
+ */
+int ltfs_mount_latest_index_either_partition(struct ltfs_volume *vol)
+{
+	int ret = -1, ipgen = 0, dpgen = 0;
+	bool dp_have_index = false, ip_have_index = false;
+	bool dp_blocks_after, ip_blocks_after;
+	bool dp_fm_after, ip_fm_after;
+	tape_block_t dp_eod, ip_eod, dp_endofidx = 0, ip_endofidx = 0;
+
+	CHECK_ARG_NULL(vol, -LTFS_NULL_ARG);
+
+	/* look for index files in the index partition*/
+	ret = ltfs_seek_index(vol->label->partid_ip, &ip_eod, &ip_endofidx, &ip_fm_after, &ip_blocks_after, false, vol);
+	ip_have_index = (ret == 0);
+	if (ip_have_index) {
+		ipgen = vol->index->generation;
+		vol->index = NULL;
+	}
+
+	/* Look for index files in data partition */
+	ret = ltfs_seek_index(vol->label->partid_dp, &dp_eod, &dp_endofidx, &dp_fm_after, &dp_blocks_after, false, vol);
+	dp_have_index = (ret == 0);
+	if (dp_have_index) {
+		dpgen = vol->index->generation;
+		vol->index = NULL;
+	}
+
+	/* If index is not found in either partition we need to return from here */
+	if (! ip_have_index && ! dp_have_index)
+		return -1;
+
+	/* Check for the latest index to be considered for mounting and parse the same*/
+	if (ipgen > dpgen) {
+		ltfsmsg(LTFS_ERR, "17320I", ipgen);
+		if ((ret = ltfs_traverse_index_backward(vol, ltfs_ip_id(vol), ipgen, NULL, NULL, NULL)) < 0)
+			ltfsmsg(LTFS_ERR, "17079E", ipgen);
+
+	} else {
+		ltfsmsg(LTFS_ERR, "17320I", dpgen);
+		if ((ret = ltfs_traverse_index_backward(vol, ltfs_dp_id(vol), dpgen, NULL, NULL, NULL)) < 0)
+			ltfsmsg(LTFS_ERR, "17079E", dpgen);
+
+	}
+
+	return ret;
+}
+
+int ltfs_set_archivemanager_media_readonly(struct ltfs_volume *vol)
+{
+	int ret = 0;
+
+	CHECK_ARG_NULL(vol, -LTFS_NULL_ARG);
+
+	if (vol->mam_attr.appl_vendor) {
+		if (strstr(vol->mam_attr.appl_vendor, "QStar") != NULL) {
+			pthread_mutex_lock(&vol->device->read_only_flag_mutex);
+			vol->device->write_protect = 1;
+			pthread_mutex_unlock(&vol->device->read_only_flag_mutex);
+			ret = 1;
+		}
+	}
+
+	return ret;
+}
+
+int ltfs_get_archivemanager_media(struct ltfs_volume *vol)
+{
+	int ret = 0;
+
+	CHECK_ARG_NULL(vol, -LTFS_NULL_ARG);
+
+	if (vol->mam_attr.appl_vendor) {
+		if (strstr(vol->mam_attr.appl_vendor, "QStar") != NULL) {
+			ret = 1;
+		}
+	}
+
+	return ret;
+}
 /* End of file */
 

@@ -48,13 +48,18 @@
 ** Copyright (C) 2012 OSR Open Systems Resources, Inc.
 ** 
 ************************************************************************************* 
+**
+**  (C) Copyright 2015 - 2017 Hewlett Packard Enterprise Development LP
+**  10/13/17 Added support for SNIA 2.4
+**
+*************************************************************************************
 */
 
 #include "libltfs/arch/filename_handling.h"
 #include "libltfs/fs.h"
 #include "libltfs/pathname.h"
 
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 #include "arch/win/win_util.h"
 #endif
 
@@ -65,6 +70,219 @@ int _utf8_strlen(const char *s);
 int _utf8_strncpy(char *t, const char *s, int n);
 #endif
 
+// HPE MD 22.09.2017 Added new struct to support SNIA 2.4 percent encoding
+
+typedef struct percent_encoding {
+    char  key;
+    char  value[4];
+} percentEncodingType;
+
+// All reserved chars and the % sign (SNIA 2.4.0 sect 7.4) needed in functions below
+percentEncodingType look_up_percent_encoding[] = {
+   { 0x01, "%01" },{ 0x02, "%02" },{ 0x03, "%03" },{ 0x04, "%04" },{ 0x05, "%05" },{ 0x06, "%06" },{ 0x07, "%07" },
+   { 0x08, "%08" },{ 0x0B, "%0B" },{ 0x0C, "%0C" },{ 0x0E, "%0E" },{ 0x0F, "%0F" },{ 0x10, "%10" },{ 0x11, "%11" },
+   { 0x12, "%12" },{ 0x13, "%13" },{ 0x14, "%14" },{ 0x15, "%15" },{ 0x16, "%16" },{ 0x17, "%17" },{ 0x18, "%18" },
+   { 0x19, "%19" },{ 0x1A, "%1A" },{ 0x1B, "%1B" },{ 0x1C, "%1C" },{ 0x1D, "%1D" },{ 0x1E, "%1E" },{ 0x1F, "%1F" },
+   { 0x25, "%25" },{ 0x3A, "%3A" } };
+
+//-Function------------------------------------------------------------------
+// Name:        percent_decode_name
+//
+// Description: This function is called to decode any percent encoded name
+//              whether it is an extended attribute, file name, or dir name.
+//
+//---------------------------------------------------------------------------
+// Parameters:  name the file, dir or attribute name to be decoded.
+//
+//---------------------------------------------------------------------------
+// Globals:     
+//              
+//
+//---------------------------------------------------------------------------
+// Returns:     
+//
+//---------------------------------------------------------------------------
+// Notes: HPE new function to support SNIA 2.4     
+//
+//---------------------------------------------------------------------------
+// References:  SNIA 2.4.0 spec section 7.4.
+//
+//--F------------------------------------------------------------------------
+void percent_decode_name(char * name)
+{
+
+   char destination_name[LTFS_FILENAME_MAX * 4 + 1] = {0}; // To hold return filename may or may not be percent encoded
+   bool decoding_complete = false;                         // Need to know if percent decoding has been carried out.
+   
+   int i, index, j = 0;
+   for (i = 0; ; i++) {
+       if (name[i]) {
+   
+           if (name[i] == 0x25) {
+   
+               for (index = 0; index < 30; index++) {
+   
+                   if ( (name[i + 1] == look_up_percent_encoding[index].value[1]) && 
+                        (name[i + 2] == look_up_percent_encoding[index].value[2]) ) 
+                   {
+                       destination_name[j++] = look_up_percent_encoding[index].key;
+                       decoding_complete = true;  // Need to skip over encoded chars in name as decoding performed
+                       i = i + 2;
+                       break;
+                   }
+               }
+            } 
+            if (!decoding_complete) {
+                destination_name[j++] = name[i];  // No decoding needed so copy this char
+            }
+            else {
+                decoding_complete = false;  // Reset flag for next char
+            }
+              
+        }
+       
+       else
+           break;
+   }   
+   
+   strcpy(name, destination_name);
+   
+}
+
+//-Function------------------------------------------------------------------
+// Name:        percent_encode_name
+//
+// Description: This function is called to encode any file, dir or 
+//              extended attribute name and to return a flag to show if 
+//              encoding was needed.
+//
+//---------------------------------------------------------------------------
+// Parameters:  name the file, dir or attribute name to be encoded.
+//
+//---------------------------------------------------------------------------
+// Globals:     
+//              
+//
+//---------------------------------------------------------------------------
+// Returns:     bool to show if encoding has taken place.
+//
+//---------------------------------------------------------------------------
+// Notes: HPE new function to support SNIA 2.4       
+//
+//---------------------------------------------------------------------------
+// References:  SNIA 2.4.0 spec section 7.4
+//
+//--F------------------------------------------------------------------------
+bool percent_encode_name(char * name)
+{
+
+   char destination_name[(LTFS_FILENAME_MAX * 4 + 1) * 3] = {0}; // To hold return filename may or may not be percent encoded
+                                                                 // large enougth to hold all percent encoded characters.
+   bool decoding_complete = false;                               // Need to know if percent decoding has been carried out.
+   bool percentencoded = false;
+     
+   int i, index, j = 0;
+   for (i = 0; ; i++) {
+       if (name[i]) {
+
+           for (index = 0; index < 30; index++) {
+
+               if (name[i] == look_up_percent_encoding[index].key) {
+                   destination_name[j++] = look_up_percent_encoding[index].value[0];
+                   destination_name[j++] = look_up_percent_encoding[index].value[1];
+                   destination_name[j++] = look_up_percent_encoding[index].value[2];
+                   decoding_complete = true;  // No need to do anything further for this char as encoding performed
+                   break;
+               }
+           }
+
+           if (!decoding_complete) {
+               destination_name[j++] = name[i];  // No encoding needed so copy this char
+           }
+           else {
+               percentencoded = true;      // Need an entry in the index to show percent encoding
+               decoding_complete = false;  // Reset flag for next char
+           }
+
+       }
+       else
+           break;
+   }   
+   
+   
+   // Check the size of percent encoded name and truncate it to fit into the original structure that is passed in
+   // This may not happen as the filename sizes are limited by the OS but best not to rely on that.
+   
+   if ( ( strlen(destination_name) ) > (LTFS_FILENAME_MAX * 4) )
+   {
+      destination_name[LTFS_FILENAME_MAX * 4] = (char)NULL;
+      strncpy(name, destination_name, (LTFS_FILENAME_MAX * 4 + 1) );
+      ltfsmsg(LTFS_INFO, "17336I");
+   }       
+   else
+   {   
+      strcpy(name, destination_name);
+   }   
+   
+   return percentencoded;
+
+}
+
+//-Function------------------------------------------------------------------
+// Name:        update_xattr_safe_name
+//
+// Description: This function is called when an attribute is parsed from the 
+//              xml off tape.  If the percentencoded tag is set then it takes
+//              the encoded key, decodes it and sets the key field.
+//
+//---------------------------------------------------------------------------
+// Parameters:  xattr  struct that holds info about the attribute
+//
+//---------------------------------------------------------------------------
+// Globals:     
+//              
+//
+//---------------------------------------------------------------------------
+// Returns:     updates the key field in xattr
+//
+//---------------------------------------------------------------------------
+// Notes: HPE new function to support SNIA 2.4      
+//
+//---------------------------------------------------------------------------
+// References:  SNIA 2.4.0 spec section 7.4
+//
+//--F------------------------------------------------------------------------
+void update_xattr_safe_name(struct xattr_info* xattr)
+{
+
+   char source_name[LTFS_FILENAME_MAX*4+1];      // To hold original file name
+   char destination_name[LTFS_FILENAME_MAX*4+1]; // To hold return filename may or may not be percent encoded
+
+   // Check to see if the name needs decoding.
+   
+   if (xattr->percentencoded) {
+   
+       strcpy(source_name, xattr->percent_encoded_key);
+       strcpy(destination_name, source_name);
+       
+       percent_decode_name(destination_name);
+       
+       ltfsmsg(LTFS_DEBUG, "17323D", source_name);
+       ltfsmsg(LTFS_DEBUG, "17324D", destination_name);
+       
+   } 
+   else
+   {
+       strcpy(source_name, xattr->key);
+       strcpy(destination_name, source_name);
+   }
+
+    
+   // Now everything is decoded put it in the decoded key.
+                  
+   xattr->key = strdup(destination_name);
+}   
+
 /**
  *  Update platfrom_safe_name member in dentry
  * @param dentry dentry to update
@@ -74,19 +292,38 @@ int _utf8_strncpy(char *t, const char *s, int n);
  */
 void update_platform_safe_name(struct dentry* dentry, bool handle_invalid_char, struct ltfs_index *idx)
 {
+   // HPE MD 22.09.2017 Added to original function to allow decoding of any percent encoded names.
+   
+   char source_name[LTFS_FILENAME_MAX*4+1];      // To hold original file name
+   char destination_name[LTFS_FILENAME_MAX*4+1]; // To hold return filename may or may not be percent encoded
+   
+   dentry->platform_safe_name = NULL;
+   
+   strcpy(source_name, dentry->name);
+   strcpy(destination_name, source_name);
+
+   // Check to see if the name needs decoding.
+
+   if (dentry->percentencoded) {
+   
+       percent_decode_name(destination_name);
+       
+       ltfsmsg(LTFS_DEBUG, "17323D", source_name);
+       ltfsmsg(LTFS_DEBUG, "17324D", destination_name);
+   }    
+
+                  
+   strcpy(source_name, destination_name);  // This may or may not be actually encoded
+
 #if defined(mingw_PLATFORM)
 	bool dosdev = false;
 	int suffix = 0;
-	char source_file_name[LTFS_FILENAME_MAX*4+1];
 	char *source_file_name_prefix, *source_file_name_extension;
 	char *target_file_name;
 	struct dentry *d;
 	int ret;
 
-	dentry->platform_safe_name = NULL;
-	strcpy(source_file_name, dentry->name);
-
-	if (_replace_invalid_chars(source_file_name, &dosdev)) {
+	if (_replace_invalid_chars(source_name, &dosdev)) {
 		if (! handle_invalid_char)
 			return;
 		suffix++;
@@ -94,16 +331,16 @@ void update_platform_safe_name(struct dentry* dentry, bool handle_invalid_char, 
 
 	/* Split source file name to prefix and extension */
 	if (! dosdev) {
-		source_file_name_prefix = source_file_name;
-		source_file_name_extension = strrchr(source_file_name, '.');
+		source_file_name_prefix = source_name;
+		source_file_name_extension = strrchr(source_name, '.');
 
 		/* If '.' is at the beginning of file name, then all of file name is
 		   recognized as prefix, not extension. */
 		if (source_file_name_extension == source_file_name_prefix)
 			source_file_name_extension = NULL;
 	} else {
-		source_file_name_prefix = source_file_name;
-		source_file_name_extension = strchr(source_file_name, '.');
+		source_file_name_prefix = source_name;
+		source_file_name_extension = strchr(source_name, '.');
 	}
 
 	if (source_file_name_extension) {
@@ -137,7 +374,7 @@ void update_platform_safe_name(struct dentry* dentry, bool handle_invalid_char, 
 		}
 	}
 #else
-	dentry->platform_safe_name = strdup(dentry->name);
+	dentry->platform_safe_name = strdup(destination_name);
 #endif
 }
 
@@ -190,7 +427,8 @@ bool _replace_invalid_chars(char * file_name, bool * dosdev)
              *
              * Add parantheses to avoid compiler stylistic warning
              */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
+            
             if ((file_name[i] >= 0x01 && file_name[i] <= 0x1F) ||
                 strchr(invalid_chars, file_name[i])) {
 #else
@@ -312,3 +550,102 @@ int _utf8_strncpy(char *t, const char *s, int n)
 }
 
 #endif
+                                                              
+//-Function------------------------------------------------------------------
+// Name:        perform_name_percent_encoding
+//
+// Description: This function is called when a file is transfered to the LTFS
+//              volume and checks to see if any of the characters need to be
+//              percent encoded.  If needed then a percentencded flag is set
+//              to true and the name that will appear in the index is set.
+//
+//---------------------------------------------------------------------------
+// Parameters:  dentry  struct that holds info about the file/dir that has
+//                      been transfered
+//
+//---------------------------------------------------------------------------
+// Globals:     
+//              
+//
+//---------------------------------------------------------------------------
+// Returns:     updates the name field and percentencoded flag in dentry
+//
+//---------------------------------------------------------------------------
+// Notes: HPE new function to support percent encoding for SNIA 2.4      
+//
+//---------------------------------------------------------------------------
+// References:  SNIA 2.4.0 spec section 7.4
+//
+//--F------------------------------------------------------------------------
+
+void perform_name_percent_encoding(struct dentry* dentry)
+{ 
+   char source_name[LTFS_FILENAME_MAX*4+1] = {0};  // To hold original file name
+   char destination_name[LTFS_FILENAME_MAX*4+1] = {0}; // To hold return filename may or may not be percent encoded
+
+   dentry->name = NULL;
+   
+   strcpy(source_name, dentry->platform_safe_name);
+   strcpy(destination_name, source_name);
+
+   dentry->percentencoded =  percent_encode_name(destination_name);
+   
+   if (dentry->percentencoded)
+   {     
+     
+      ltfsmsg(LTFS_DEBUG, "17321D", source_name);
+      ltfsmsg(LTFS_DEBUG, "17322D", destination_name);
+      
+   }
+   
+   dentry->name = strdup(destination_name);  // This may or may not be actually encoded
+}
+
+//-Function------------------------------------------------------------------
+// Name:        perform_xattr_percent_encoding
+//
+// Description: This function is called when an attribute is set
+//              and checks to see if any of the characters need to be
+//              percent encoded.  If needed then a percentencded flag is set
+//              to true and the name that will appear in the index is set.
+//
+//---------------------------------------------------------------------------
+// Parameters:  xattr  struct that holds info about attribute
+//
+//---------------------------------------------------------------------------
+// Globals:     
+//              
+//
+//---------------------------------------------------------------------------
+// Returns:     updates the percent_encoded_key field and percentencoded flag 
+//              in xattr
+//
+//---------------------------------------------------------------------------
+// Notes: HPE New function to support percent encoding for SNIA 2.4      
+//
+//---------------------------------------------------------------------------
+// References:  SNIA 2.4.0 spec section 7.4
+//
+//--F------------------------------------------------------------------------
+void perform_xattr_percent_encoding(struct xattr_info* xattr)
+{ 
+   char source_name[LTFS_FILENAME_MAX * 4 + 1] = {0};      // To hold original file name
+   char destination_name[LTFS_FILENAME_MAX * 4 + 1] = {0}; // To hold return filename may or may not be percent encoded
+   
+   strcpy(source_name, xattr->key); // This is the unencoded key
+   strcpy(destination_name, source_name);
+
+   xattr->percentencoded =  percent_encode_name(destination_name);
+   
+   
+   if (xattr->percentencoded) 
+   {
+      
+      ltfsmsg(LTFS_DEBUG, "17321D", source_name);
+      ltfsmsg(LTFS_DEBUG, "17322D", destination_name);
+      
+   }
+   
+   xattr->percent_encoded_key = strdup(destination_name);  // This is the name that will be written to the xml in the index.
+
+}

@@ -49,6 +49,11 @@
 **
 *************************************************************************************
 **
+**  (C) Copyright 2015 - 2017 Hewlett Packard Enterprise Development LP
+**  10/13/17 Added support for SNIA 2.4
+**
+*************************************************************************************
+**
 ** Copyright (C) 2012 OSR Open Systems Resources, Inc.
 ** 
 ************************************************************************************* 
@@ -63,9 +68,9 @@
  * field of the fuse_operations being turned into ftruncate64,
  * which leads to a compiler error
 */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 #define _FILE_OFFSET_BITS_SET_FTRUNCATE 1
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
 #include "ltfs_fuse.h"
 #include "libltfs/ltfs_fsops.h"
@@ -98,10 +103,10 @@
  *  
  */
 #ifdef mingw_PLATFORM
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 static struct fuse_context *context;
 #define fuse_get_context() context
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 #endif /* mingw_PLATFORM */
 #define FUSE_REQ_ENTER(r)   REQ_NUMBER(REQ_STAT_ENTER, REQ_FUSE, r)
 #define FUSE_REQ_EXIT(r)    REQ_NUMBER(REQ_STAT_EXIT,  REQ_FUSE, r)
@@ -220,6 +225,19 @@ static void _file_close(struct file_info *fi, struct ltfs_fuse_data *priv)
 		ltfs_mutex_lock(&fi->lock);
 		fi->open_count--;
 		if (fi->open_count == 0) {
+			
+#ifndef HPE_mingw_BUILD			
+			// HPE MD 12.10.2017 Added to support SNIA 2.4 section 9.2.8 openforwrite
+			// Non windows OS close files here and so openforwrite flag needs to be cleared.
+			if (!((struct dentry *)(fi->dentry_handle))->isdir)
+			{
+				acquirewrite_mrsw(&((struct dentry *)(fi->dentry_handle))->meta_lock);
+				((struct dentry *)(fi->dentry_handle))->openforwrite = false;
+				releasewrite_mrsw(&((struct dentry *)(fi->dentry_handle))->meta_lock);
+			}
+	
+#endif
+	 	
 			HASH_DEL(priv->file_table, fi);
 			do_free = true;
 		}
@@ -246,11 +264,11 @@ static void _ltfs_fuse_attr_to_stat(struct stat *stbuf, struct dentry_attr *attr
 	stbuf->st_dev = LTFS_SUPER_MAGIC;
 	stbuf->st_ino = attr->uid;
 	if (attr->isslink) {
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 		stbuf->st_mode = S_IFLNK | 0777;
 #else
 		stbuf->st_mode = 0777;
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 	} else {
 		stbuf->st_mode = ((attr->isdir ? S_IFDIR : S_IFREG) | (attr->readonly ? 0555 : 0777)) &
 			(attr->isdir ? priv->dir_mode : priv->file_mode);
@@ -348,7 +366,7 @@ int ltfs_fuse_statfs(const char *path, struct statvfs *buf)
 	 *
 	 * We support the statvfs structure in our MinGW environmnet
 	 */
-#if !defined(mingw_PLATFORM) || defined(HP_mingw_BUILD)
+#if !defined(mingw_PLATFORM) || defined(HPE_mingw_BUILD)
 	int ret = 0;
 	struct ltfs_fuse_data *priv = fuse_get_context()->private_data;
 	struct statvfs *stats = &priv->fs_stats;
@@ -389,7 +407,7 @@ int ltfs_fuse_statfs(const char *path, struct statvfs *buf)
 	ltfs_request_trace(FUSE_REQ_EXIT(REQ_STATFS), 0, 0);
 #endif /* 0 */
 
-#endif /* !defined(mingw_PLATFORM) || defined(HP_mingw_BUILD) */
+#endif /* !defined(mingw_PLATFORM) || defined(HPE_mingw_BUILD) */
 
 	return errormap_fuse_error(ret);;
 }
@@ -475,7 +493,7 @@ int ltfs_fuse_release(const char *path, struct fuse_file_info *fi)
 	struct ltfs_fuse_data *priv = fuse_get_context()->private_data;
 	struct ltfs_file_handle *file = FILEHANDLE_TO_STRUCT(fi->fh);
 	bool dirty, write_index, open_write;
-	uint64_t uid;
+	//uint64_t uid;  HPE MD 16.10.2017 Removed as compiler warning shows this variable set but not used
 	int ret;
 
 #if 0
@@ -484,7 +502,8 @@ int ltfs_fuse_release(const char *path, struct fuse_file_info *fi)
 
 	ltfsmsg(LTFS_DEBUG, "14035D", _dentry_name(path, file->file_info));
 
-	uid = ((struct dentry *)(file->file_info->dentry_handle))->uid;
+    // HPE MD 16.10.2017 Removed as compiler warning shows this variable set but not used
+	//uid = ((struct dentry *)(file->file_info->dentry_handle))->uid;
 
 	/* Should this file's buffers be flushed? */
 	ltfs_mutex_lock(&file->lock);
@@ -566,7 +585,7 @@ int ltfs_fuse_releasedir(const char *path, struct fuse_file_info *fi)
 {
 	struct ltfs_fuse_data *priv = fuse_get_context()->private_data;
 	struct ltfs_file_handle *file = FILEHANDLE_TO_STRUCT(fi->fh);
-	uint64_t uid;
+	//uint64_t uid;  HPE MD 16.10.2017 Removed as compiler warning shows this variable set but not used
 	int ret;
 
 #if 0
@@ -575,7 +594,8 @@ int ltfs_fuse_releasedir(const char *path, struct fuse_file_info *fi)
 
 	ltfsmsg(LTFS_DEBUG, "14034D", _dentry_name(path, file->file_info));
 
-	uid = ((struct dentry *)(file->file_info->dentry_handle))->uid;
+    // HPE MD 16.10.2017 Removed as compiler warning shows this variable set but not used
+	//uid = ((struct dentry *)(file->file_info->dentry_handle))->uid;
 
 	ret = ltfs_fsops_close(file->file_info->dentry_handle, false, false, false, priv->data);
 
@@ -626,7 +646,7 @@ int ltfs_fuse_fsync(const char *path, int isdatasync, struct fuse_file_info *fi)
 {
 	struct ltfs_fuse_data *priv = fuse_get_context()->private_data;
 	struct ltfs_file_handle *file = FILEHANDLE_TO_STRUCT(fi->fh);
-	uint64_t uid;
+	// uint64_t uid;  HPE MD 16.10.2017 Removed as compiler warning shows this variable set but not used
 	int ret;
 
 #if 0
@@ -634,8 +654,23 @@ int ltfs_fuse_fsync(const char *path, int isdatasync, struct fuse_file_info *fi)
 #endif /* 0 */
 
 	ltfsmsg(LTFS_DEBUG, "14036D", _dentry_name(path, file->file_info));
-	uid = ((struct dentry *)(file->file_info->dentry_handle))->uid;
+	
+    // HPE MD 16.10.2017 Removed as compiler warning shows this variable set but not used
+    //uid = ((struct dentry *)(file->file_info->dentry_handle))->uid;
 	ret = _ltfs_fuse_do_flush(file, priv, __FUNCTION__);
+
+#ifdef HPE_mingw_BUILD
+
+	// HPE MD 12.10.2017 Added to support SNIA 2.4 section 9.2.8 openforwrite
+	// Windows OS finish flushing files here and so openforwrite flag needs to be cleared.
+	if (!((struct dentry *)(file->file_info->dentry_handle))->isdir)
+	{
+		acquirewrite_mrsw(&((struct dentry *)(file->file_info->dentry_handle))->meta_lock);
+		((struct dentry *)(file->file_info->dentry_handle))->openforwrite = false;
+		releasewrite_mrsw(&((struct dentry *)(file->file_info->dentry_handle))->meta_lock);
+	}
+
+#endif
 
 #if 0
 	ltfs_request_trace(FUSE_REQ_EXIT(REQ_FSYNC), ret, uid);
@@ -648,7 +683,7 @@ int ltfs_fuse_flush(const char *path, struct fuse_file_info *fi)
 {
 	struct ltfs_fuse_data *priv = fuse_get_context()->private_data;
 	struct ltfs_file_handle *file = FILEHANDLE_TO_STRUCT(fi->fh);
-	uint64_t uid;
+	//uint64_t uid;  HPE MD 16.10.2017 Removed as compiler warning shows this variable set but not used
 	int ret;
 
 #if 0
@@ -656,7 +691,9 @@ int ltfs_fuse_flush(const char *path, struct fuse_file_info *fi)
 #endif /* 0 */
 
 	ltfsmsg(LTFS_DEBUG, "14037D", _dentry_name(path, file->file_info));
-	uid = ((struct dentry *)(file->file_info->dentry_handle))->uid;
+	
+    // HPE MD 16.10.2017 Removed as compiler warning shows this variable set but not used
+    //uid = ((struct dentry *)(file->file_info->dentry_handle))->uid;
 	ret = _ltfs_fuse_do_flush(file, priv, __FUNCTION__);
 
 #if 0
@@ -680,13 +717,13 @@ int ltfs_fuse_utimens(const char *path, const struct timespec ts[2])
 	tsTmp[0] = ltfs_timespec_from_timespec(&ts[0]);
 	tsTmp[1] = ltfs_timespec_from_timespec(&ts[1]);
 
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 	if (tsTmp[0].tv_sec == 0 && tsTmp[0].tv_nsec == 0
 			&& tsTmp[1].tv_sec == 0 && tsTmp[1].tv_nsec == 0) {
 		ltfsmsg(LTFS_WARN, "14117W");
 		return errormap_fuse_error(ret);
 	}
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
 	ltfsmsg(LTFS_DEBUG, "14038D", path);
 	ret = ltfs_fsops_utimens_path(path, tsTmp, &id, priv->data);
@@ -823,7 +860,7 @@ int ltfs_fuse_mkdir(const char *path, mode_t mode)
 {
 	struct ltfs_fuse_data *priv = fuse_get_context()->private_data;
 	void *dentry_handle;
-	uint64_t uid = 0;
+	//uint64_t uid = 0;  HPE MD 16.10.2017 Removed as compiler warning shows this variable set but not used
 	int ret;
 
 #if 0
@@ -834,10 +871,12 @@ int ltfs_fuse_mkdir(const char *path, mode_t mode)
 
 	ret = ltfs_fsops_create(path, true, false, (struct dentry **)&dentry_handle, priv->data);
 	if (ret == 0) {
-		uid = ((struct dentry *)dentry_handle)->uid;
+		
+        // HPE MD 16.10.2017 Removed as compiler warning shows this variable set but not used
+        //uid = ((struct dentry *)dentry_handle)->uid;
 		ltfs_fsops_close(dentry_handle, false, false, false, priv->data);
 	}
-	
+
 #if 0
 	ltfs_request_trace(FUSE_REQ_EXIT(REQ_MKDIR), ret, uid);
 #endif /* 0 */
@@ -1229,16 +1268,27 @@ void * ltfs_fuse_mount(struct fuse_conn_info *conn)
 	int						ret = 0;
 	struct ltfs_fuse_data *priv = fuse_get_context()->private_data;
 	struct statvfs *stats = &priv->fs_stats;
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 	int						iter = 0;
 	char					*index_rules_utf8 = NULL;
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
 #if 0
 	ltfs_request_trace(FUSE_REQ_ENTER(REQ_MOUNT), 0, 0);
 #endif /* 0 */
 
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
+
+	/* Allocate the LTFS volume structure */
+	if (! priv->data) {
+		if (ltfs_volume_alloc("ltfs", &priv->data) < 0) {
+			/* Could not allocate LTFS volume structure */
+			ltfsmsg(LTFS_ERR, "14011E");
+			return 1;
+		}
+		ltfs_use_atime(priv->atime, priv->data);
+	}
+
 	/*
 	 * OSR
 	 *
@@ -1271,6 +1321,9 @@ void * ltfs_fuse_mount(struct fuse_conn_info *conn)
 	}
 
 	/* Setup tape drive.  Trap and handle the special case of no media present... */
+
+    // HPE drives 7 and 8 now suppot append only mode and need to set the correct flag
+    priv->data->append_only_mode = (bool)priv->append_only_mode;
 	ret = ltfs_setup_device(priv->data);
 	if ((ret == -EDEV_NO_MEDIUM) || (ret == -LTFS_NO_MEDIUM)) {
 		ltfsmsg(LTFS_ERR, "14075E");
@@ -1297,17 +1350,78 @@ void * ltfs_fuse_mount(struct fuse_conn_info *conn)
 
 	ret = ltfs_mount(false, false, false, false, priv->rollback_gen, priv->data);
 	if (ret < 0) {
+		/*
+		 * If mount fails then we need to see if the Write Error flag is set in the MAM
+		 * and then try to mount the volume as read-only with the latest index considering both partitions
+		 *
+		 * HPE MD 25.09.2017 Added DPPWE and IPPWE to support SNIA 2.4 if either flag is set they will all
+		 * try and use a valid index from any partition.
+		 */
+		if (priv->data->mam_attr.volumelockstate == PWE_MAM) 
+		{
+			ltfsmsg(LTFS_INFO, "14481I");
+			if (ltfs_mount_latest_index_either_partition(priv->data)) 
+			{
+				/* If the Write Error flag is set in the MAM but no valid index is found from either partition */
+				ltfsmsg(LTFS_ERR, "14482E");
+				return NULL;
+			}
+		} 
+		else if (priv->data->mam_attr.volumelockstate == DPPWE_MAM)
+		{
+		   ltfsmsg(LTFS_INFO, "14483I");
+		   if (ltfs_mount_latest_index_either_partition(priv->data)) 
+		   {
+			   /* If the Data Partition Write Error flag is set in the MAM but no valid index is found from either partition */
+			   ltfsmsg(LTFS_ERR, "14484E");
+			   return NULL;
+		   }
+		
+		}
+		else if (priv->data->mam_attr.volumelockstate == IPPWE_MAM) 
+		{
+		   ltfsmsg(LTFS_INFO, "14485I");
+		   if (ltfs_mount_latest_index_either_partition(priv->data)) 
+		   {
+			   /* If the Index Partition Write Error flag is set in the MAM but no valid index is found from either partition */
+			   ltfsmsg(LTFS_ERR, "14486E");
+			   return NULL;
+		   }
+		
+		}
+        else if (priv->data->mam_attr.volumelockstate == DP_IP_PWE_MAM)
+        {
+            ltfsmsg(LTFS_INFO, "14487I");
+            if (ltfs_mount_latest_index_either_partition(priv->data))
+            {
+                /* If the Index Partition Write Error flag is set in the MAM but no valid index is found from either partition */
+                ltfsmsg(LTFS_ERR, "14488E");
+                return NULL;
+            }
+
+        }
+		else 
+		{
 		/* The return type -LTFS_NO_MEMORY happens when memory allocation fails */
-		if (ret == -LTFS_NO_MEMORY) {
-			conn->reserved[0] = -LTFS_INDEX_INVALID;
-			ltfs_index_free_force(&priv->data->index);
-			ltfs_device_close(priv->data);
-			return NULL;
-		} else {
-			ltfsmsg(LTFS_ERR, "14013E");
-			conn->reserved[0] = ret;
-			ltfs_device_close(priv->data);
-			return NULL;
+		/* CR10930 - previously we changed this to LTFS_INDEX_INVALID and left  */
+		/*  there; however that meant the mount continued and didn't clean up   */
+		/*  correctly, and things got in a right mess.  So now we report the    */
+		/*  error back to Fuse4WinMount and deal with it there.                 */
+		   if (ret == -LTFS_NO_MEMORY) 
+		   {
+                        ltfsmsg(LTFS_ERR, "14489E");
+		   	conn->reserved[0] = ret;  //-LTFS_INDEX_INVALID;
+		   	ltfs_index_free_force(&priv->data->index);
+		   	ltfs_device_close(priv->data);
+		   	return NULL;
+		   } 
+		   else 
+		   {
+		   	ltfsmsg(LTFS_ERR, "14013E");
+		   	conn->reserved[0] = ret;
+		   	ltfs_device_close(priv->data);
+		   	return NULL;
+		   }
 		}
 	}
 
@@ -1388,6 +1502,14 @@ void * ltfs_fuse_mount(struct fuse_conn_info *conn)
 		}
 	}
 
+	/* Let us check the volumelockstate and update the bitfield */
+	ltfs_update_volumelockstate(priv->data);
+
+	/* Let us check if Archive Manager tape and mount it as readonly */
+	ret = ltfs_set_archivemanager_media_readonly(priv->data);
+	if (ret == 1)
+		ltfsmsg(LTFS_INFO, "17351I");
+
 	/* Setting the drive as write-protected if user mounts as readonly */
 
 	while (iter < priv->args->argc) {
@@ -1411,7 +1533,7 @@ void * ltfs_fuse_mount(struct fuse_conn_info *conn)
 		 */
 		ltfs_device_reopen(priv->devname, priv->data);
 	}
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
 
 	/* Suppress unused variable warning. */
@@ -1422,7 +1544,7 @@ void * ltfs_fuse_mount(struct fuse_conn_info *conn)
 	 * iosched_initialized() so should have a defined default value */
 	priv->data->iosched_handle = NULL;
 
-#if !defined(mingw_PLATFORM) || defined(HP_mingw_BUILD)
+#if !defined(mingw_PLATFORM) || defined(HPE_mingw_BUILD)
 	/*
 	 * Open the I/O scheduler, if one has been specified by the user.
 	 * Please note that when we run in library mode the I/O scheduler
@@ -1448,7 +1570,7 @@ void * ltfs_fuse_mount(struct fuse_conn_info *conn)
 	 * thus we need the block size here
 	 *
 	 */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 	stats->f_bsize = priv->data->label->blocksize;
 #endif
 
@@ -1487,7 +1609,7 @@ void * ltfs_fuse_mount(struct fuse_conn_info *conn)
 	stats->f_namemax = LTFS_FILENAME_MAX;
 
 	ltfsmsg(LTFS_INFO, "14029I");
-#endif /* !defined(mingw_PLATFORM) || defined(HP_mingw_BUILD) */
+#endif /* !defined(mingw_PLATFORM) || defined(HPE_mingw_BUILD) */
 
 	/* Kick timer thread for sync by time */
 	if (priv->sync_type == LTFS_SYNC_TIME)
@@ -1532,6 +1654,8 @@ void ltfs_fuse_umount(void *userdata)
 	if (kmi_initialized(priv->data))
 		kmi_destroy(priv->data);
 
+    priv->data->append_only_mode = (bool)priv->append_only_mode;
+
 	ltfs_unmount(SYNC_UNMOUNT, priv->data);
 
 	if (priv->capture_index)
@@ -1549,11 +1673,16 @@ void ltfs_fuse_umount(void *userdata)
 	 * point instead of doing it in main()
 	 *
 	 */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 	if (priv->eject)
 		ltfs_eject_tape(priv->data);
-
 	ltfs_device_close(priv->data);
+	/* HPE change: Need to free the volume as if eject is done for 
+	 * the cartridge through shell extension and new cartridge is loaded. This is 
+	 * required as the label was not getting updated for the new cartridge. The captured 
+	 * index was getting overwritten. 
+	 */
+	ltfs_volume_free(& priv->data);
 #endif
 }
 

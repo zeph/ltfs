@@ -44,9 +44,9 @@
 #
 #############################################################################
 #
-# (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+# (C) Copyright 201 - 2017 Hewlett Packard Enterprise Development LP
 #
-# Changes to support building for HP environment 
+# Changes to support building for HPE environment 
 #    - ltotape backend; clean ltfs.conf; add unltfs utility
 #
 #############################################################################
@@ -65,7 +65,7 @@ FUSE="NONE";
 #
 LTFS_FRAMEWORK=LTFS.framework
 LTFS_FRAMEWORK_EXECUTABLE=LTFS
-LTFS_VERSION=3.0.0
+LTFS_VERSION=3.4.2
 
 OUTPUT_DIR_NAME=distribution
 
@@ -138,7 +138,7 @@ if [ $# -ne 0 ]; then
 		/bin/rm -rf ${OUTPUT_DIR_NAME}
 
 ##
-## Added for HP-SOS
+## Added for HPE-SOS
 ##
 		cd ${BASEDIR}/conf
 		${GNUMAKE} -f Makefile.osx clean-local
@@ -388,7 +388,7 @@ find include -type f  | xargs chmod a+r
 ##
 cd ${BASEDIR}/${OUTPUT_DIR_NAME}
 PACKAGE_MAKER=/Applications/Utilities/PackageMaker.app/Contents/MacOS/PackageMaker
-${PACKAGE_MAKER} -d ${BASEDIR}/osx_installer/LTFS.pmdoc -v -i com.ltfs -o ${BASEDIR}/${OUTPUT_DIR_NAME}/LTFS_Mac.pkg
+${PACKAGE_MAKER} -d ${BASEDIR}/osx_installer/LTFS.pmdoc -v -i com.hpe.ltfs -o ${BASEDIR}/${OUTPUT_DIR_NAME}/HPEStoreOpenSoftware.pkg
 
 cd ${BASEDIR}
 echo "Build complete"

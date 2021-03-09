@@ -3,9 +3,9 @@
  *
  *  unltfs.c - "unformat" an LTFS volume
  *
- *  Licensed Materials - Property of HP
+ *  Licensed Materials - Property of HPE
  *  
- *  (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+ *  (C) Copyright 2015, 2016 Hewlett Packard Enterprise Development LP
  *
  * Portions copyrighted by OSR provided to Hewlett Packard under
  * license.
@@ -17,7 +17,7 @@
  ************************************************************************************* 
  */
 
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 #include "libltfs/arch/win/win_util.h"
 #endif
  
@@ -38,7 +38,7 @@
  * data. 
  *  
  */
-#if defined(mingw_PLATFORM) && !defined(HP_mingw_BUILD)
+#if defined(mingw_PLATFORM) && !defined(HPE_mingw_BUILD)
 char *bin_mkltfs_dat;
 #else
 extern char bin_mkltfs_dat[];
@@ -117,11 +117,11 @@ int main(int argc, char **argv)
 	const char *config_file = NULL;
 	void *message_handle;
 
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 	(void) lang;
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 	/* Check for LANG variable and set it to en_US.UTF-8 if it is unset. */
 	lang = getenv("LANG");
 	if (! lang) {
@@ -132,7 +132,7 @@ int main(int argc, char **argv)
 			return 1;
 		}
 	}
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
 	/* Start up libltfs with the default logging level. */
 	ret = ltfs_init(LTFS_INFO, true, false);
@@ -363,6 +363,19 @@ int unformat_tape(struct other_format_opts *opt)
 	/* Here we go: do the deed: */
 	if (! opt->quiet) {
 		ltfsmsg(LTFS_INFO, "15065I");
+	}
+
+	/* Get mam attributes to be used to get info about archive manager tape */
+	ret = tape_get_MAM_AMVALattributes(newvol->device,
+								 ltfs_part_id2num(newvol->label->partid_ip, newvol),
+								 opt->quiet,
+								 &newvol->mam_attr);
+
+	/* Let us check if Archive Manager tape and return failure */
+	ret = ltfs_get_archivemanager_media(newvol);
+	if (ret) {
+		ltfsmsg(LTFS_ERR, "15489E");
+		goto out_close;
 	}
 
 	ret = tape_unformat (newvol->device);

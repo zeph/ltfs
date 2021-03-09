@@ -44,7 +44,7 @@ AM_LIBTOOLFLAGS = --tag=disable-static
 
 libkmi_simple_la_SOURCES = simple.c key_format_ltfs.c
 #
-# OSR/HP_mingw_BUILD
+# OSR/HPE_mingw_BUILD
 # 
 # In our MinGW environment, we dynamically link to the package 
 # data. 
@@ -57,7 +57,7 @@ libkmi_simple_la_CPPFLAGS = @AM_CPPFLAGS@ -I ..
 libkmi_flatfile_la_SOURCES = flatfile.c key_format_ltfs.c
 
 #
-# OSR/HP_mingw_BUILD
+# OSR/HPE_mingw_BUILD
 # 
 # In our MinGW environment, we dynamically link to the package 
 # data. 

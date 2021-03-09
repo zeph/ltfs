@@ -245,7 +245,7 @@ root:table {
 						"                              live:   LTFS replaces mount point path by current mount point" }
 		// Reserved 14462I
 		14463I:string { "    -o scsi_append_only_mode=<on|off>  Set the tape device append-only mode (default=on)" }
-		14464I:string { "%s version %s (build %d)" } // Used by HP-SOS
+		14464I:string { "%s version %s (build %d)" } // Used by HPE-SOS
 		// Reserved 14465I
 		// Reserved 14466I
 		14467I:string { "    -o syslogtrace            Enable diagnostic output to stderr and syslog(same as verbose=303)" }
@@ -259,5 +259,14 @@ root:table {
 						"                                         It is equivalent to \"-o sync_type=unmount\" when 0 is specified\n"
 						"                                         (default: min=5)\n"
 						"                              unmount:   LTFS attempts to write an index when the medium is unmounted" }
+		14481I:string { "The Permanent write error bit is set in MAM " }
+		14482E:string { "Failed to find a valid index from either partition to do a read-only mount as PWE is set in MAM" }
+        14483I:string { "The Data Partition Permanent write error bit is set in MAM " }
+		14484E:string { "Failed to find a valid index from either partition to do a read-only mount as DPPWE is set in MAM" }
+        14485I:string { "The Index Partition Permanent write error bit is set in MAM " }
+		14486E:string { "Failed to find a valid index from either partition to do a read-only mount as IPPWE is set in MAM" }
+        14487I:string { "The Data and Index Partition Permanent write error bit is set in MAM " }
+		14488E:string { "Failed to find a valid index from either partition to do a read-only mount as DP_IP_PWE is set in MAM" }
+		14489E:string { "Unable to mount, out of memory or mutexes" }
 	}
 }

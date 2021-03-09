@@ -150,6 +150,7 @@ root:table {
 		16109E:string { "This operation is not allowed on this medium (%s)" }
 		16110E:string { "The --salvage-rollback-points option was specified against a normal cartridge." }
 		16111E:string { "Cannot roll back: incompatible medium" }
+		16112E:string { "Cannot repair: incompatible medium" }
 		// 2.2.0.2
 
 		// Help messages
@@ -174,7 +175,7 @@ root:table {
 		//unused 16418I:string { "  -t, --time=<time>               Specify the time to roll back" }
 		//unused 16419I:string { "                                  Time value should be \"yyyy-mm-dd HH:MM:SS.nanosec\"" }
 		16420I:string { "  -v, --traverse=<strategy>       Set traverse mode for listing roll back points. Strategy should be forward or backward. (default: backward)" }
-	        16421I:string { "  -z, --deep-recovery             Recover EOD missing cartridge.\n"
+		16421I:string { "  -z, --deep-recovery             Recover EOD missing cartridge.\n"
         	                "                                  Some blocks might be erased, but recover to final unmount point\n"
                 	        "                                  with an index version of at least "2.0.0" or earlier.\n"
                         	"                                  (Must be used for a cartridge that cannot be recovered by a normal option.)" }
@@ -191,5 +192,16 @@ root:table {
 		16432I:string { "Usage example:" }
 		16433I:string { "  %s %s" }
 		16434I:string { "  %s %s %s %s" }
+		16435E:string { "This operation is not allowed, Volume is locked" }
+		16436E:string { "This operation is not allowed, Volume is permanently locked" }
+		16437I:string { "Volume corrected, Setting the LTFS Volume to be unlocked" }
+		16438E:string { "LTFS volume corrected but failed to unlock the volume" }
+		16439E:string { "Unable to repair volume belonging to Archive Manager spanned set" }
+		16440I:string { "  -w, --list-open-files           List open for write files at rollback points. (Effective only for -l option)" }
+		16441I:string { "  -c, --count-open-files          Count open for write files at rollback points. (Effective only for -l option)" }
+		16442I:string { "  -F, --Force                     Force rollback when there are files open for write in the index. (Effective only for -r option)" }
+		16443E:string { "Rollback index has the following open for write files" }
+		16444E:string { "use -F option to force rollback" }
+		16445I:string { "  -P, --Pipe                      Format the list of rollback points for consumption by another process" }
 	}
 }

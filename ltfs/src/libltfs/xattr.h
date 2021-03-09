@@ -60,6 +60,15 @@ extern "C" {
 #include "ltfs.h"
 
 #define LTFS_PRIVATE_PREFIX "ltfs."
+#define VOL_LOCK_STATE_INTERPRET "----Volume Lock Status Code Interpretation---- \n \
+			0  -> Volume Unlocked \n \
+			1  -> Volume Locked \n \
+			2  -> Volume Perm-Locked \n \
+			4  -> Physical Write Protect \n \
+			5  -> Volume Locked and Physical Write Protect \n \
+			6  -> Volume Perm-Locked and Physical Write Protect \n \
+			33 -> Volume Locked Write Error \n \
+			37 -> Volume Locked Write Error and Physical Write Protect"
 
 int xattr_set(struct dentry *d, const char *name, const char *value, size_t size, int flags,
 	struct ltfs_volume *vol);

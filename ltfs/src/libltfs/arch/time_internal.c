@@ -45,7 +45,7 @@
 **
 *************************************************************************************
 **
-**  (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+**  (C) Copyright 2015, 2016 Hewlett Packard Enterprise Development LP
 **
 *************************************************************************************
 */
@@ -59,7 +59,7 @@
 #include "libltfs/ltfslogging.h"
 #include "libltfs/arch/time_internal.h"
 
-#if defined (HP_mingw_BUILD)
+#if defined (HPE_mingw_BUILD)
 # include "libltfs/arch/win/win_util.h"
 #endif
 

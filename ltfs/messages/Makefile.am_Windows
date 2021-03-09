@@ -45,14 +45,14 @@
 ##
 ######################################################################################
 ##
-##  (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+##  (C) Copyright 2015, 2016 Hewlett Packard Enterprise Development LP
 ## 
 ##  10/08/10 Add ltotape to list of RESOURCES
 ##
 ######################################################################################
 
 ##
-## OSR/HP_mingw_BUILD
+## OSR/HPE_mingw_BUILD
 ##
 ## Object file name must be changed from libltfs_dat to bin_libltfs_dat. This is 
 ## part of changing the package name from libltfs to bin_libltfs to avoid collision 

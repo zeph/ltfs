@@ -45,6 +45,11 @@
 **
 *************************************************************************************
 **
+**  (C) Copyright 2015 - 2017 Hewlett Packard Enterprise Development LP
+**  10/13/17 Added support for SNIA 2.4
+**
+*************************************************************************************
+**
 ** Copyright (C) 2012 OSR Open Systems Resources, Inc.
 ** 
 ************************************************************************************* 
@@ -63,7 +68,7 @@
  * defined. Strange, yes, but true 
  *  
  */
-#if defined(HP_mingw_BUILD) && defined(__MINGW32__)
+#if defined(HPE_mingw_BUILD) && defined(__MINGW32__)
 
 #undef __MINGW32__
 #include <unicode/ubrk.h>
@@ -71,7 +76,7 @@
 
 #else 
 #include <unicode/ubrk.h>
-#endif /* #if defined(HP_mingw_BUILD) && defined(__MINGW32__) */
+#endif /* #if defined(HPE_mingw_BUILD) && defined(__MINGW32__) */
 
 #include <unicode/ustring.h>
 #endif
@@ -228,9 +233,9 @@ int index_criteria_parse_size(const char *criteria, size_t len, struct index_cri
 	snprintf(rule, rule_length, "%s", criteria + strlen("size="));
 
 	/* On windows, snprintf doesn't append the '\0' by default. We do that here. */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 	rule[rule_length - 1] = '\0';
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
 	for (ptr=&rule[0]; *ptr; ptr++) {
 		if (isalpha(*ptr) && *(ptr+1) && isalpha(*(ptr+1))) {
@@ -324,7 +329,9 @@ int index_criteria_parse_name(const char *criteria, size_t len, struct index_cri
 	if (ret == 0) {
 		rule_ptr = ic->glob_patterns;
 		while (*rule_ptr && ret == 0) {
-			ret = pathname_validate_file(*rule_ptr);
+			// HPE MD 22.09.2017 function was changed for SNIA 2.4 extra param 0 
+			// will cause function to perform as before.
+			ret = pathname_validate_file(*rule_ptr, 0);
 			if (ret == -LTFS_INVALID_PATH)
 				ltfsmsg(LTFS_ERR, "11302E", *rule_ptr);
 			else if (ret == -LTFS_NAMETOOLONG)

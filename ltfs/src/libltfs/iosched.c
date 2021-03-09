@@ -176,7 +176,7 @@ int iosched_close(struct dentry *d, bool flush, struct ltfs_volume *vol)
 bool iosched_initialized(struct ltfs_volume *vol)
 {
 	CHECK_ARG_NULL(vol, false);
-/*-- HP CHANGE:
+/*-- HPE CHANGE:
  * Compare handle to NULL and return false/true explicitly
  *  rather than returning the value of the handle implicitly
  *  cast to a bool...  See also ltfs_fuse_mount in ltfs_fuse.c

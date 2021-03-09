@@ -265,7 +265,7 @@ struct iosched_ops *iosched_get_ops(void)
  * data. 
  *  
  */
-#if !defined(mingw_PLATFORM) || defined(HP_mingw_BUILD)
+#if !defined(mingw_PLATFORM) || defined(HPE_mingw_BUILD)
 extern char iosched_fcfs_dat[];
 #endif
 
@@ -278,7 +278,7 @@ const char *iosched_get_message_bundle_name(void **message_data)
      * data. 
      *  
      */
-#if !defined(mingw_PLATFORM) || defined(HP_mingw_BUILD)
+#if !defined(mingw_PLATFORM) || defined(HPE_mingw_BUILD)
 	*message_data = iosched_fcfs_dat;
 #else
 	*message_data = NULL;

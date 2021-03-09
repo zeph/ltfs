@@ -9,7 +9,7 @@
 #
 #############################################################################
 #
-# (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+# (C) Copyright 2015, 2016 Hewlett Packard Enterprise Development LP
 #
 #############################################################################
 
@@ -45,7 +45,7 @@ function initialize_global_variables() {
         RPM_SPECS_DIR=`rpm -E %{_specdir}`
         RPM_SRPMS_DIR=`rpm -E %{_srcrpmdir}`
         RPM_RPMS_DIR=`rpm -E %{_rpmdir}`
-        RPM_ARCH_NAME=`rpm -E %{_arch}`
+        RPM_ARCH_NAME=`uname -m`
         LTFS_CODE_DIRECTORY=`pwd`
         LTFS_NAME=`grep Name: $LTFS_SPEC_NAME | awk '{print $2}'`
         LTFS_VERSION=`grep Version: $LTFS_SPEC_NAME | awk '{print $2}'`
@@ -67,7 +67,9 @@ function build_ltfs() {
    fi
    cp -rf $LTFS_CODE_DIRECTORY $LTFS_NAME-$LTFS_VERSION 
    tar -zcvf $LTFS_SOURCE_NAME $LTFS_NAME-$LTFS_VERSION
+   mkdir -p $RPM_SOURCES_DIR
    cp -f $LTFS_SOURCE_NAME $RPM_SOURCES_DIR
+
    cd $LTFS_CODE_DIRECTORY
    rpmbuild -ba $LTFS_SPEC_NAME
    if [ $? -ne 0 ] ; then
@@ -91,10 +93,39 @@ function copy_ltfs_build() {
 
 }
 
+function packaging_binaries() {
+   echo "Producing binary tarball"
+   cd $LTFS_CODE_DIRECTORY/build
+   mkdir binary_package
+   cd binary_package
+   cp ../../doc/COPYING.LIB .
+   cp ../../doc/INSTALLING.linux .
+   cp ../../doc/README .
+   cp ../$LTFS_NAME-$LTFS_VERSION-$LTFS_RELEASE.$RPM_ARCH_NAME.rpm .
+   tar -cvzf $LTFS_NAME-$LTFS_VERSION-BINARIES-RHEL.$RPM_ARCH_NAME.tar.gz COPYING.LIB INSTALLING.linux README $LTFS_NAME-$LTFS_VERSION-$LTFS_RELEASE.$RPM_ARCH_NAME.rpm
+
+}
+
+function packaging_source() {
+   echo "Producing source tarball"
+   cd $LTFS_CODE_DIRECTORY/build
+   mkdir source_package
+   cd source_package
+   svn export https://csvnsdc-pro.sdc.hpecorp.net:18490/svn/swd-hpltfs/trunk/ltfs ltfs
+   cp ../../doc/COPYING.LIB .
+   cp ../../doc/BUILDING.linux .
+   cp ../../doc/BUILDING.macosx .
+   cp ../../doc/README .
+   tar -cvzf $LTFS_NAME-$LTFS_VERSION-SOURCE.tar.gz COPYING.LIB BUILDING.linux BUILDING.macosx README ltfs 
+}
+
+
 function Main() {
     initialize_global_variables
     build_ltfs
     copy_ltfs_build
+    packaging_binaries
+    packaging_source
 }
 
 Main $@

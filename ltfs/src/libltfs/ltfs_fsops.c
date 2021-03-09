@@ -48,6 +48,12 @@
 **                  lucasvr@us.ibm.com
 **
 *************************************************************************************
+**
+**  (C) Copyright 2015-2017 Hewlett Packard Enterprise Development LP
+**
+**  13/10/2017 Added changes to support SNIA 2.4
+**
+*************************************************************************************
 */
 
 #include "ltfs.h"
@@ -74,7 +80,13 @@ int ltfs_fsops_open(const char *path, bool open_write, bool use_iosched, struct 
 	CHECK_ARG_NULL(vol, -LTFS_NULL_ARG);
 
 	if (open_write) {
+#ifdef HPE_mingw_BUILD
+		ret = tape_read_only(vol->device, ltfs_part_id2num(ltfs_ip_id(vol), vol));
+		if (ret == 0 || ret == -LTFS_LESS_SPACE)
+			ret = tape_read_only(vol->device, ltfs_part_id2num(ltfs_dp_id(vol), vol));
+#else /* Appending was allowed when VAL locked hence differenciating the code */
 		ret = ltfs_get_tape_readonly(vol);
+#endif
 		/* Check for a read-only volume, but ignore ENOSPC: file systems do
 		 * not typically check for medium full on open.
 		 */
@@ -243,6 +255,7 @@ int ltfs_fsops_create(const char *path, bool isdir, bool readonly, struct dentry
 	ret = ltfs_get_tape_readonly(vol);
 	if (ret < 0)
 		return ret;
+
 	ret = ltfs_test_unit_ready(vol);
 	if (ret < 0) {
 		ltfsmsg(LTFS_ERR, "11047E");
@@ -309,6 +322,14 @@ int ltfs_fsops_create(const char *path, bool isdir, bool readonly, struct dentry
 
 	acquirewrite_mrsw(&parent->meta_lock);
 	acquirewrite_mrsw(&d->meta_lock);
+
+	// HPE MD 12.10.2017 If a file is being created here it is openforwrite until the file is closed and
+	// as such needs to be flagged.  To complie with SNIA 2.4
+
+	if (!isdir)
+	{
+		d->openforwrite = true;
+	}
 
 	/* Set times */
 	get_current_timespec(&d->creation_time);
@@ -929,6 +950,7 @@ int ltfs_fsops_setxattr(const char *path, const char *name, const char *value, s
 	bool write_lock;
 	int ret_restore;
 	char value_restore[LTFS_MAX_XATTR_SIZE];
+	bool ignore = false;
 
 	id->uid = 0;
 	id->ino = 0;
@@ -940,8 +962,21 @@ int ltfs_fsops_setxattr(const char *path, const char *name, const char *value, s
 	if (size > LTFS_MAX_XATTR_SIZE)
 		return -LTFS_LARGE_XATTR; /* this is the error returned by ext3 when the xattr is too large */
 
-	ret = ltfs_get_tape_readonly(vol);
-	if (ret < 0 && ret != -LTFS_LESS_SPACE)
+	/* Check if the extended attribute writing is allowed */
+	if (! strncmp(name, "ltfs.volumeLockState", strlen("ltfs.volumeLockState"))
+			|| ! strncmp(name, "user.ltfs.volumeLockState", strlen("user.ltfs.volumeLockState"))) {
+		ret = tape_read_only(vol->device, ltfs_part_id2num(ltfs_ip_id(vol), vol));
+		if ((ret == 0) || (ret == -LTFS_LESS_SPACE) || (ret == -LTFS_NO_SPACE)) {
+			ret = tape_read_only(vol->device, ltfs_part_id2num(ltfs_dp_id(vol), vol));
+			if ((ret == 0) || (ret == -LTFS_LESS_SPACE) || (ret == -LTFS_NO_SPACE)) {
+				ignore = true;
+			}
+		}
+	} else {
+		ret = ltfs_get_tape_readonly(vol);
+	}
+
+	if ((ret < 0) && (ignore == false))
 		return ret;
 
 	ret = ltfs_test_unit_ready(vol);
@@ -961,7 +996,8 @@ int ltfs_fsops_setxattr(const char *path, const char *name, const char *value, s
 		ltfsmsg(LTFS_ERR, "11118E", ret);
 		return ret;
 	}
-	ret = pathname_format(name, &new_name, true, false);
+	// HPE MD 22.09.2017 / is now allow in xattrs
+	ret = pathname_format(name, &new_name, true, true);
 	if (ret < 0) {
 		if (ret != -LTFS_INVALID_PATH && ret != -LTFS_NAMETOOLONG)
 			ltfsmsg(LTFS_ERR, "11119E", ret);
@@ -974,7 +1010,9 @@ int ltfs_fsops_setxattr(const char *path, const char *name, const char *value, s
 		ret = -LTFS_XATTR_NAMESPACE;
 		goto out_free;
 	}
-	ret = pathname_validate_xattr_name(new_name_strip);
+	// HPE MD 22.09.2017 function was changed for SNIA 2.4 extra param 0 
+	// will cause function to perform as before.
+	ret = pathname_validate_xattr_name(new_name_strip, 0);
 	if (ret < 0) {
 		if (ret != -LTFS_INVALID_PATH && ret != -LTFS_NAMETOOLONG) /* normal errors */
 			ltfsmsg(LTFS_ERR, "11120E", ret);
@@ -1077,7 +1115,8 @@ int ltfs_fsops_getxattr(const char *path, const char *name, char *value, size_t 
 		ltfsmsg(LTFS_ERR, "11124E", ret);
 		return ret;
 	}
-	ret = pathname_format(name, &new_name, true, false);
+	// HPE MD 22.09.2017 / is now allow in xattrs
+	ret = pathname_format(name, &new_name, true, true);
 	if (ret < 0) {
 		if (ret != -LTFS_INVALID_PATH && ret != -LTFS_NAMETOOLONG)
 			ltfsmsg(LTFS_ERR, "11125E", ret);
@@ -1089,7 +1128,9 @@ int ltfs_fsops_getxattr(const char *path, const char *name, char *value, size_t 
 		ret = -LTFS_NO_XATTR;
 		goto out_free;
 	}
-	ret = pathname_validate_xattr_name(new_name_strip);
+	// HPE MD 22.09.2017 function was changed for SNIA 2.4 extra param 0 
+	// will cause function to perform as before.
+	ret = pathname_validate_xattr_name(new_name_strip, 0);
 	if (ret < 0) {
 		if (ret != -LTFS_INVALID_PATH && ret != -LTFS_NAMETOOLONG) /* normal errors */
 			ltfsmsg(LTFS_ERR, "11126E", ret);
@@ -1229,7 +1270,8 @@ int ltfs_fsops_removexattr(const char *path, const char *name, ltfs_file_id *id,
 		ltfsmsg(LTFS_ERR, "11136E", ret);
 		return ret;
 	}
-	ret = pathname_format(name, &new_name, true, false);
+	// HPE MD 22.09.2017 / is now allow in xattrs
+	ret = pathname_format(name, &new_name, true, true);
 	if (ret < 0) {
 		if (ret != -LTFS_INVALID_PATH && ret != -LTFS_NAMETOOLONG)
 			ltfsmsg(LTFS_ERR, "11137E", ret);
@@ -1241,7 +1283,9 @@ int ltfs_fsops_removexattr(const char *path, const char *name, ltfs_file_id *id,
 		ret = -LTFS_NO_XATTR;
 		goto out_free;
 	}
-	ret = pathname_validate_xattr_name(new_name_strip);
+	// HPE MD 22.09.2017 function was changed for SNIA 2.4 extra param 0 
+	// will cause function to perform as before.
+	ret = pathname_validate_xattr_name(new_name_strip, 0);
 	if (ret < 0) {
 		if (ret != -LTFS_INVALID_PATH && ret != -LTFS_NAMETOOLONG) /* normal errors */
 			ltfsmsg(LTFS_ERR, "11138E", ret);

@@ -39,7 +39,7 @@ make_obj() {
 	case $KERNEL_NAME in
 		MINGW32_NT*)
 			# 
-			# HP_mingw_BUILD
+			# HPE_mingw_BUILD
 			#
 			# We use dynamic libraries for the package data, so use the 
 			# -m dll switch

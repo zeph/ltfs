@@ -140,7 +140,7 @@ struct ltfs_fuse_data {
 	ltfs_mutex_t file_table_lock; /**< Controls access to 'open_files' */
 	struct file_info *file_table;    /**< Hash table of open file handles */
 	
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
     struct fuse_args *args;        /**< OSR - The arguments to the program */
 #endif
 };

@@ -32,7 +32,7 @@
 #  ZZ_Copyright_END
 #
 #
-#   (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+#   (C) Copyright 2015, 2016 Hewlett Packard Enterprise Development LP
 #   05/28/10 Add hptape backend to list of platform drivers
 #   09/23/10 Rename hptape to more generic ltotape
 #

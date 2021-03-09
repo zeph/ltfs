@@ -49,9 +49,10 @@
 **
 *************************************************************************************
 **
-**  (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+**  (C) Copyright 2015 - 2017 Hewlett Packard Enterprise Development LP
 **  11/12/12 Change _xattr_get_virtual() to get software product name from ltfs.h
 **            rather than using a hardcoded value
+**  10/13/17 Added support for SNIA 2.4
 **
 *************************************************************************************
 */
@@ -61,6 +62,7 @@
 #endif
 #include "ltfs.h"
 #include "ltfs_fsops.h"
+#include "arch/filename_handling.h" // HPE MD 22/09/2017 Added support for SNIA 2.4 percent encoding
 #include "xattr.h"
 #include "fs.h"
 #include "xml_libltfs.h"
@@ -124,6 +126,7 @@ int xattr_do_set(struct dentry *d, const char *name, const char *value, size_t s
 			return -LTFS_NO_MEMORY;
 		}
 		xattr->key = strdup(name);
+		perform_xattr_percent_encoding(xattr); // HPE MD 22.09.2017 added to support SNIA spec 2.4.0 sect 7.4
 		if (! xattr->key) {
 			ltfsmsg(LTFS_ERR, "10001E", "xattr_do_set: xattr key");
 			ret = -LTFS_NO_MEMORY;
@@ -608,7 +611,10 @@ int _xattr_list_physicals(struct dentry *d, char *list, size_t size)
 #endif /* (!defined (__APPLE__)) && (!defined (mingw_PLATFORM)) */
 
 	TAILQ_FOREACH(entry, &d->xattrlist, list) {
-		ret = pathname_unformat(entry->key, &new_name);
+
+        update_xattr_safe_name(entry);  // HPE MD added to support SNIA spec 2.4.0 sect 7.4
+
+        ret = pathname_unformat(entry->key, &new_name);
 		if (ret < 0) {
 			ltfsmsg(LTFS_ERR, "11142E", ret);
 			goto out;
@@ -668,6 +674,7 @@ bool _xattr_is_virtual(struct dentry *d, const char *name, struct ltfs_volume *v
 		|| ! strcmp(name, "ltfs.mamApplicationFormatVersion")
 		|| ! strcmp(name, "ltfs.mamVolumeName")
 		|| ! strcmp(name, "ltfs.mamBarcode")
+		|| ! strcmp(name, "ltfs.volumeLockState")
 		)
 		return true;
 
@@ -749,7 +756,9 @@ bool _xattr_is_virtual(struct dentry *d, const char *name, struct ltfs_volume *v
 int _xattr_get_virtual(struct dentry *d, char *buf, size_t buf_size, const char *name,
 	struct ltfs_volume *vol)
 {
+	unsigned int bitfield = 0x00;
 	int ret = -LTFS_NO_XATTR;
+	char tempval[1024] = {0};
 	char *val = NULL;
 	struct index_criteria *ic = &vol->index->index_criteria;
 	cartridge_health_info h = {
@@ -835,6 +844,52 @@ int _xattr_get_virtual(struct dentry *d, char *buf, size_t buf_size, const char 
 		ret = _xattr_get_string(vol->mam_attr.volume_name, &val, name);
 	} else if (!strcmp(name, "ltfs.mamBarcode")) {
 		ret = _xattr_get_string(vol->mam_attr.barcode, &val, name);
+	} else if (!strcmp(name, "ltfs.volumeLockState")) {
+		pthread_mutex_lock(&vol->lockbits.lock_bitfield);
+		/* Let us update the mam attributes once. This is done for the PWE bit to get set
+		 * as we cannot update the same while setting it
+		 */
+		ret = tape_device_lock(vol->device);
+		if (ret < 0) {
+			ltfsmsg(LTFS_ERR, "12010E", __FUNCTION__);
+			return ret;
+		}
+		tape_get_MAMattributes(vol->device,
+							   TC_MAM_VOL_LOCK_STATE,
+							   ltfs_part_id2num(vol->label->partid_ip, vol),
+							   &vol->mam_attr);
+		tape_device_unlock(vol->device);
+		if (vol->mam_attr.volumelockstate == PWE_MAM)
+		{	
+		   ltfs_set_bitfield(vol, PWE);
+		}   
+	   
+	   // HPE MD 28.09.2017 Added for SNIA 2.4
+	   // As the PWE bit was being set here will also set the IP or DP bits if needed.
+	   
+	   if (vol->mam_attr.volumelockstate == IPPWE_MAM)
+	   {   
+			ltfs_set_bitfield(vol, IPPWE);
+		}	
+	   if (vol->mam_attr.volumelockstate == DPPWE_MAM)
+		{	
+		   ltfs_set_bitfield(vol, DPPWE);
+		}   
+	   if (vol->mam_attr.volumelockstate == DP_IP_PWE_MAM)
+	   {   
+			ltfs_set_bitfield(vol, IPPWE);
+			ltfs_set_bitfield(vol, DPPWE);
+		}	
+
+		if (vol->mam_attr.volumelockstate != NOLOCK_MAM) {
+			bitfield = ltfs_retreive_bitfield(vol);
+			sprintf(tempval, "%u", bitfield);
+			val = strdup(tempval);
+		} else {
+			sprintf(tempval, "%s", "");
+			val = strdup(tempval);
+		}
+		pthread_mutex_unlock(&vol->lockbits.lock_bitfield);
 	} else if (! strcmp(name, "ltfs.vendor.IBM.logLevel")) {
 		ret = asprintf(&val, "%d", ltfs_log_level);
 		if (ret < 0) {
@@ -1158,11 +1213,17 @@ int _xattr_set_virtual(struct dentry *d, const char *name, const char *value,
 		ltfs_mutex_unlock(&vol->index->dirty_lock);
 
 		/* Update the CM volume Name attribute */
-		ret = tape_update_mam_attributes(vol->device, new_value, TC_MAM_USR_MED_TXT_LABEL, NULL);
+		ret = tape_device_lock(vol->device);
+		if (ret < 0) {
+			ltfsmsg(LTFS_ERR, "12010E", __FUNCTION__);
+			return ret;
+		}
+		ret = tape_update_mam_attributes(vol->device, new_value, TC_MAM_USR_MED_TXT_LABEL, NULL, NOLOCK_MAM);
 		if (! ret) {
 			ret = tape_get_MAMattributes(vol->device, TC_MAM_USR_MED_TXT_LABEL,
 			            ltfs_part_id2num(vol->label->partid_ip, vol), &vol->mam_attr);
 		}
+		tape_device_unlock(vol->device);
 	} else if (! strcmp(name, "ltfs.mamBarcode") && d == vol->index->root) {
 		char *value_null_terminated = NULL, *new_value = NULL;
 
@@ -1198,13 +1259,134 @@ int _xattr_set_virtual(struct dentry *d, const char *name, const char *value,
 			return ret;
 		}
 
+		ret = tape_device_lock(vol->device);
+		if (ret < 0) {
+			ltfsmsg(LTFS_ERR, "12010E", __FUNCTION__);
+			return ret;
+		}
 		/* Update the CM Barcode Name attribute */
 		ret = tape_update_mam_attributes(vol->device, NULL, TC_MAM_BARCODE,
-				(const char*) new_value);
+				(const char*) new_value, NOLOCK_MAM);
 		if (! ret) {
 			ret = tape_get_MAMattributes(vol->device,TC_MAM_BARCODE,
 			         ltfs_part_id2num(vol->label->partid_ip, vol), &vol->mam_attr);
 		}
+		tape_device_unlock(vol->device);
+	} else if (! strcmp(name, "ltfs.volumeLockState") && d == vol->index->root) {
+
+		char *value_null_terminated = NULL, *new_value = NULL;
+
+		/* Find out if the attribute can be set and the set in the MAM*/
+		pthread_mutex_lock(&vol->lockbits.lock_bitfield);
+		if (value && size) {
+			value_null_terminated = malloc(size + 1);
+			if (! value_null_terminated) {
+				ltfsmsg(LTFS_ERR, "10001E", "_xattr_set_virtual: volume lock state");
+				pthread_mutex_unlock(&vol->lockbits.lock_bitfield);
+				return -LTFS_NO_MEMORY;
+			}
+			memcpy(value_null_terminated, value, size);
+			value_null_terminated[size] = '\0';
+			// HPE MD 22.09.2017 xattr can now have / in the name
+			ret = pathname_format(value_null_terminated, &new_value, true, true);
+			free(value_null_terminated);
+			if (ret < 0) {
+				pthread_mutex_unlock(&vol->lockbits.lock_bitfield);
+				return ret;
+			}
+			ret = 0;
+
+			if (! strncmp(new_value,"0",size)) {
+				if (! (ret = ltfs_get_bitfield_info(vol, UNLOCKED))) {
+					/* Set the unlocked attribute in the MAM */
+					ret = tape_device_lock(vol->device);
+					if (ret < 0) {
+						ltfsmsg(LTFS_ERR, "12010E", __FUNCTION__);
+						return ret;
+					}
+					ret = tape_update_mam_attributes(vol->device,
+													 NULL,
+													 TC_MAM_VOL_LOCK_STATE,
+													 NULL,
+													 UNLOCKED_MAM);
+					if (ret == 0) {
+						ret = tape_get_MAMattributes(vol->device,
+													 TC_MAM_VOL_LOCK_STATE,
+													 ltfs_part_id2num(vol->label->partid_ip, vol),
+													 &vol->mam_attr);
+						if (ret == 0)
+							ltfs_set_volume_lockstate(vol, UNLOCKED_MAM, true);
+
+						ltfs_set_bitfield(vol, UNLOCKED);
+					}
+					tape_device_unlock(vol->device);
+				} else {
+					ltfsmsg(LTFS_INFO, "17319I", VOL_LOCK_STATE_INTERPRET);
+				}
+			} else if (! strncmp(new_value,"1",size)) {
+				if (! (ret = ltfs_get_bitfield_info(vol, LOCKED))) {
+					/* Set the locked attribute in the MAM */
+					ret = tape_device_lock(vol->device);
+					if (ret < 0) {
+						ltfsmsg(LTFS_ERR, "12010E", __FUNCTION__);
+						return ret;
+					}
+					ret = tape_update_mam_attributes(vol->device,
+													 NULL,
+													 TC_MAM_VOL_LOCK_STATE,
+													 NULL,
+													 LOCKED_MAM);
+					if (ret == 0) {
+						ret = tape_get_MAMattributes(vol->device,
+								TC_MAM_VOL_LOCK_STATE,
+								ltfs_part_id2num(vol->label->partid_ip, vol),
+								&vol->mam_attr);
+						if (ret == 0)
+							ltfs_set_volume_lockstate(vol, LOCKED_MAM, true);
+
+						ltfs_set_bitfield(vol, LOCKED);
+					}
+					tape_device_unlock(vol->device);
+				} else {
+					ltfsmsg(LTFS_INFO, "17319I", VOL_LOCK_STATE_INTERPRET);
+				}
+			} else if (! strncmp(new_value,"2",size)) {
+				if (! (ret = ltfs_get_bitfield_info(vol, PERM_LOCKED))) {
+					/* Set the permlocked attribute in the MAM */
+					ret = tape_device_lock(vol->device);
+					if (ret < 0) {
+						ltfsmsg(LTFS_ERR, "12010E", __FUNCTION__);
+						return ret;
+					}
+					ret = tape_update_mam_attributes(vol->device,
+													 NULL,
+													 TC_MAM_VOL_LOCK_STATE,
+													 NULL,
+													 PERMLOCKED_MAM);
+					if (ret == 0) {
+						ret = tape_get_MAMattributes(vol->device,
+													 TC_MAM_VOL_LOCK_STATE,
+													 ltfs_part_id2num(vol->label->partid_ip, vol),
+													 &vol->mam_attr);
+						if (ret == 0)
+							ltfs_set_volume_lockstate(vol, PERMLOCKED_MAM, true);
+
+						ltfs_set_bitfield(vol, PERM_LOCKED);
+					}
+					tape_device_unlock(vol->device);
+				} else {
+					ltfsmsg(LTFS_INFO, "17319I", VOL_LOCK_STATE_INTERPRET);
+				}
+			/* User should not be allowed to set value other than 0,1 and 3 */
+			} else {
+				ltfsmsg(LTFS_ERR, "17318E");
+				pthread_mutex_unlock(&vol->lockbits.lock_bitfield);
+				return -1;
+			}
+		}
+		//ltfs_get_bitfield_info(vol, set_bits bits)
+		pthread_mutex_unlock(&vol->lockbits.lock_bitfield);
+
 	} else if (! strcmp(name, "ltfs.createTime")) {
 		ret = _xattr_set_time(d, &d->creation_time, value, size, name, vol);
 		if (ret == LTFS_TIME_OUT_OF_RANGE) {
@@ -1390,7 +1572,7 @@ int _xattr_remove_virtual(struct dentry *d, const char *name, struct ltfs_volume
 			ltfs_set_index_dirty(false, false, vol->index);
 		}
 /* Since the volume name is removed the mam volume name will be updated to NULL */
-		ret = tape_update_mam_attributes(vol->device, NULL, 0, NULL);
+		ret = tape_update_mam_attributes(vol->device, NULL, 0, NULL, NOLOCK_MAM);
 		tape_get_MAMattributes(vol->device, TC_MAM_USR_MED_TXT_LABEL,
 					            ltfs_part_id2num(vol->label->partid_ip, vol), &vol->mam_attr);
 /* Separate implementation for MAM attributes exist. */		

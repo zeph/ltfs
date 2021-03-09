@@ -49,7 +49,7 @@
 **
 *************************************************************************************
 **
-**  (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+**  (C) Copyright 2015, 2016 Hewlett Packard Enterprise Development LP
 **  07/06/10 Added new flag '-f, --force' and changed default behaviour to NOT allow
 **            format if MAM attribute indicates tape contains an LTFS volume
 **  10/29/12 Attempt to load and check write protect status earlier in the process
@@ -98,7 +98,7 @@ volatile char *copyright = LTFS_COPYRIGHT_0"\n"LTFS_COPYRIGHT_1"\n"LTFS_COPYRIGH
  * data. 
  *  
  */
-#if defined(mingw_PLATFORM) && !defined(HP_mingw_BUILD)
+#if defined(mingw_PLATFORM) && !defined(HPE_mingw_BUILD)
 char *bin_mkltfs_dat;
 #else
 extern char bin_mkltfs_dat[];
@@ -242,11 +242,11 @@ int main(int argc, char **argv)
 	}
 	struct fuse_args args = FUSE_ARGS_INIT(fuse_argc, fuse_argv);
 
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 	(void) lang;
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
-#ifndef HP_mingw_BUILD
+#ifndef HPE_mingw_BUILD
 	/* Check for LANG variable and set it to en_US.UTF-8 if it is unset. */
 	lang = getenv("LANG");
 	if (! lang) {
@@ -257,7 +257,7 @@ int main(int argc, char **argv)
 			return MKLTFS_OPERATIONAL_ERROR;
 		}
 	}
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
 	/* Start up libltfs with the default logging level. */
 #ifndef mingw_PLATFORM
@@ -453,11 +453,7 @@ int main(int argc, char **argv)
 	ltfs_set_syslog_level(syslog_level);
 
 	/* Starting mkltfs */
-#ifdef GENERIC_OEM_BUILD
-	ltfsmsg(LTFS_INFO, "15000I", SOFTWARE_PRODUCT_NAME, PACKAGE_VERSION, log_level);
-#else
 	ltfsmsg(LTFS_INFO, "15000I", LTFS_VENDOR_NAME SOFTWARE_PRODUCT_NAME, PACKAGE_VERSION, log_level);
-#endif /* GENERIC_OEM_BUILD */
 
 	/* Show command line arguments */
 	for (i = 0, cmd_args_len = 0 ; i < argc; i++) {
@@ -583,6 +579,10 @@ int format_tape(struct ltfs_volume *vol, struct other_format_opts *opt, void *ar
 	ret = ltfs_set_volume_name(opt->volume_name, vol);
 	if (ret < 0)
 		return MKLTFS_OPERATIONAL_ERROR;
+	/* Volume lock state will be set to unlocked */
+	ret = ltfs_set_volume_lockstate(vol, UNLOCKED_MAM, false);
+	if (ret < 0)
+		return MKLTFS_OPERATIONAL_ERROR;
 	ret = ltfs_reset_capacity(!opt->keep_capacity, vol);
 	if (ret < 0) {
 		return MKLTFS_OPERATIONAL_ERROR;
@@ -653,7 +653,7 @@ int format_tape(struct ltfs_volume *vol, struct other_format_opts *opt, void *ar
 	ltfsmsg(LTFS_DEBUG, "15007D");
 	
 	/*
-	 * HP
+	 * HPE
 	 * Load and check write-protect status before proceeding
 	 */
 
@@ -682,6 +682,20 @@ int format_tape(struct ltfs_volume *vol, struct other_format_opts *opt, void *ar
 	}
 
 	ltfs_set_partition_map(DATA_PART_ID, INDEX_PART_ID, DATA_PART_NUM, INDEX_PART_NUM, vol);
+
+	/* Get mam attributes to be used to get info about archive manager tape */
+	ret = tape_get_MAM_AMVALattributes(vol->device,
+								 ltfs_part_id2num(vol->label->partid_ip, vol),
+								 opt->quiet,
+								 &vol->mam_attr);
+
+	/* Let us check if Archive Manager tape and return failure */
+	ret = ltfs_get_archivemanager_media(vol);
+	if (ret) {
+		ltfsmsg(LTFS_ERR, "15488E");
+		ret = MKLTFS_OPERATIONAL_ERROR;
+		goto out_close;
+	}
 
 	/* Check target medium state */
 	if (! opt->force) {
@@ -900,6 +914,20 @@ int unformat_tape(struct ltfs_volume *vol, struct other_format_opts *opt, void *
 		goto out_close;
 	}
 	ltfsmsg(LTFS_DEBUG, "15007D");
+
+	/* Get mam attributes to be used to get info about archive manager tape */
+	ret = tape_get_MAM_AMVALattributes(vol->device,
+								 ltfs_part_id2num(vol->label->partid_ip, vol),
+								 opt->quiet,
+								 &vol->mam_attr);
+
+	/* Let us check if Archive Manager tape and return failure */
+	ret = ltfs_get_archivemanager_media(vol);
+	if (ret) {
+		ltfsmsg(LTFS_ERR, "15489E");
+		ret = MKLTFS_OPERATIONAL_ERROR;
+		goto out_close;
+	}
 
 	/* Donot unformat if tape is already unformated */
 	ret = tape_check_unformat_ok(vol->device);

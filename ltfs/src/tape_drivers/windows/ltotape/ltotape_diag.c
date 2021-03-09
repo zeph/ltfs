@@ -6,7 +6,7 @@
 **
 ** CONTENTS:        Diagnostic routines specifically for LTO drives
 **
-** (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+** (C) Copyright 2015 - 2018 Hewlett Packard Enterprise Development LP
 ** (c) Copyright 2010, 2011 Quantum Corporation
 **
 ** This program is free software; you can redistribute it and/or modify it
@@ -33,6 +33,7 @@
 ************************************************************************************* 
 */
 
+#include "ltotape.h"
 #include "ltotape_diag.h"
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -44,15 +45,15 @@
 #include <dirent.h>
 #include "ltfs_copyright.h"
 #include "ltfsprintf.h"
-#include "ltotape.h"
 
-#ifdef HP_BUILD
+#ifdef HPE_BUILD
 volatile char *copyright = LTFS_COPYRIGHT_0"\n"LTFS_COPYRIGHT_1"\n"LTFS_COPYRIGHT_2"\n"HPLTFS_COPYRIGHT"\n";
 #elif defined QUANTUM_BUILD
 volatile char *copyright = LTFS_COPYRIGHT_0"\n"LTFS_COPYRIGHT_1"\n"LTFS_COPYRIGHT_2"\n"QTMLTFS_COPYRIGHT"\n";
 #elif defined GENERIC_OEM_BUILD
-volatile char *copyright = LTFS_COPYRIGHT_0"\n"LTFS_COPYRIGHT_1"\n"LTFS_COPYRIGHT_2"\n"GENERICLTFS_COPYRIGHT"\n";
+volatile char *copyright = LTFS_COPYRIGHT_0"\n"LTFS_COPYRIGHT_1"\n"LTFS_COPYRIGHT_2"\n";
 #endif
+
 /*
  * External function declaration (found in ltotape.c)
  */
@@ -68,11 +69,8 @@ static int ltotape_read_mini_drivedump(void *device, const char *fname);
 static long long ltotape_get_buffer_size(int buff_id, unsigned char *buffer);
 static int ltotape_read_snapshot (void* device, char* fname);
 static int ltotape_trim_logs (char* serialno);
-#ifdef QUANTUM_BUILD /* Fix compiler warning */
+static int ltotape_readbuffer (void *device, int id, unsigned char *buf, size_t offset, size_t len, int type);
 static int ltotape_sort_oldest (const struct dirent ** pA, const struct dirent ** pB);
-#else
-static int ltotape_sort_oldest (const void* pA, const void* pB);
-#endif
 
 #ifdef __APPLE__
 static int ltotape_select_logfiles (struct dirent *entry);
@@ -87,18 +85,7 @@ static int ltotape_select_logfiles (const struct dirent *entry);
  *  if this ever became multi-threaded..
  */
 
-/* 
- * OSR
- *
- * In our environment, we default to the Windows Temp directory
- * for logs
- *
- */
-#ifdef HP_mingw_BUILD
 static char dirname[MAX_PATH];
-#else
-static char dirname[256];
-#endif
 static char drivesn[32];
 
 /****************************************************************************
@@ -108,10 +95,9 @@ static char drivesn[32];
 char* ltotape_get_default_snapshotdir (void)
 {
 #ifdef __APPLE__
-  sprintf (dirname, "%s%s",
-           getenv("HOME"),
-           MACOS_LOGFILE_DIR);
-#elif HP_mingw_BUILD
+  sprintf (dirname, MACOS_LOGFILE_DIR);
+
+#elif HPE_mingw_BUILD
  /* 
   * OSR
   *
@@ -119,6 +105,7 @@ char* ltotape_get_default_snapshotdir (void)
   *
   */
   GetTempPath(sizeof(dirname), dirname);
+
 #else
   sprintf (dirname, LINUX_LOGFILE_DIR);
 #endif
@@ -130,12 +117,20 @@ char* ltotape_get_default_snapshotdir (void)
  * Set directory to use for storing snapshot logs
  * @param newdir directory to use for snapshot logs
  * @return pointer to directory name
+ *
+ * HPE 10/13/2017 changes made to resolve a runtime error
  */
 char* ltotape_set_snapshotdir (char* newdir)
 {
-  int slen = sizeof(dirname) - 1;
-  strncpy (dirname, newdir, slen);
-  dirname[slen] = '\0';
+  int slen = sizeof (dirname) - 1;
+  if (dirname == newdir) {
+    //    fprintf (stderr, "Nothing to do, pointing at same area of memory already\n");
+  } else {
+    strncpy (dirname, newdir, slen);
+    dirname[slen] = '\0';
+    //    fprintf (stderr, "dirname is now %s\n", dirname);
+  }
+
   return (dirname);
 }
 
@@ -151,8 +146,8 @@ int ltotape_log_snapshot (void *device, int minidump)
 	time_t     now;
 	struct tm *tm_now;
 	int        status;
-
-	ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
+        unsigned char buf[4];
+     	ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*)device;
 
 /*
  * Snapshots are only available for LTO devices
@@ -183,8 +178,7 @@ int ltotape_log_snapshot (void *device, int minidump)
 	tm_now = localtime(&now);
 
 #ifdef QUANTUM_BUILD
-	if ( sio->drive_vendor_id == drivevendor_hp )
-	{
+	if ( sio->drive_vendor_id == drivevendor_hp ) {
 		sprintf (fname, "%s/ltfs_%04d%02d%02d_%02d%02d%02d_%s.ltd", 
 			 dirname,
 			 tm_now->tm_year + 1900,
@@ -194,9 +188,8 @@ int ltotape_log_snapshot (void *device, int minidump)
 			 tm_now->tm_min,
 			 tm_now->tm_sec,
 			 sio->serialno);
-	}
-	else if ( sio->drive_vendor_id == drivevendor_quantum ) 
-	{
+
+  } else if (sio->drive_vendor_id == drivevendor_quantum) {
 		sprintf (fname, "%s/ltfs_%04d%02d%02d_%02d%02d%02d_%s.svm", 
 			 dirname,
 			 tm_now->tm_year + 1900,
@@ -206,9 +199,8 @@ int ltotape_log_snapshot (void *device, int minidump)
 			 tm_now->tm_min,
 			 tm_now->tm_sec,
 			 sio->serialno);
-	}
-	else // Drive vendor unknown
-	{
+
+	} else  { // Drive vendor unknown
 	  /* "Unable to save drive dump to file"
           */
 	  ltfsmsg(LTFS_WARN, "20079W" );
@@ -227,64 +219,80 @@ int ltotape_log_snapshot (void *device, int minidump)
 #endif
 
 /*
- * Trigger a log snapshot, then read and store the log:
+ * Trigger a log snapshot, then read and store the log. Note that the way
+ *  this is actually achieved depends on drive type...
  */
 	ltfsmsg(LTFS_INFO, "20076I");
-	if (sio->type == drive_lto7) {
-		if (minidump) {
-			status = ltotape_snapshot_dump(device, 0x63);
+
+/*
+ * For LTO7 and later, we have to:
+ *  1. Trigger a drive dump (either full or mini)
+ *  2. Read the drive dump (either full or mini)
+ *  3. Release the ITL Nexus so that the snapshot mechanism is available to other ports - CR11435
+ */
+	if ((sio->type == drive_lto7) || (sio->type == drive_lto8)) {
+		status = ltotape_snapshot_dump (device, (minidump)? DIAG_TRIGGER_MINIDUMP : DIAG_TRIGGER_DUMP);
+		if (status == -1) {
+			ltfsmsg (LTFS_WARN, "20077W", status);
+		
+		} else if (minidump) {
+			status = ltotape_read_mini_drivedump (device, fname);
+		
 		} else {
-			status = ltotape_snapshot_dump(device, 0x60);
+			status = ltotape_read_drivedump (device, fname);
 		}
-	} else {
-		status = ltotape_snapshot_now(device);
-	}
-	if (status == -1) {
-           ltfsmsg(LTFS_WARN, "20077W", status);
 
+		if (ltotape_readbuffer (device, LTOTAPE_CLEAR_ERRHIST_NEXUS, buf, 0, 0, LTOTAPE_RBMODE_ERRHIST) < 0) {
+		        ltfsmsg (LTFS_WARN, "20077W", status);
+		}
+
+/*
+ * For LTO6 and earlier, things are simpler:
+ *  1. Trigger a snapshot
+ *  2. Read the snapshot
+ */
 	} else {
-		if (sio->type == drive_lto7) {
-			if (minidump) {
-				status = ltotape_read_mini_drivedump(device, fname);
-			} else {
-				status = ltotape_read_drivedump(device, fname);
-			}
+		if ((status = ltotape_snapshot_now (device)) == -1) {
+        		ltfsmsg (LTFS_WARN, "20077W", status);
 		} else {
-			status = ltotape_read_snapshot(device, fname);
+			status = ltotape_read_snapshot (device, fname);
 		}
-	   if (status == -1) {         /* -1 = SCSI problem */
-	     ltfsmsg(LTFS_WARN, "20078W", status);
-		 
-	   } else if (status == -2) {  /* -2 = file saving problem */
-		  ltfsmsg(LTFS_WARN, "20079W");
-
-	   } else if (status == -3) {  /* -3 = malloc problem */
-		  ltfsmsg(LTFS_WARN, "20078W", status);
-
-	   } else {
-		  ltfsmsg(LTFS_DEBUG, "20080D", fname);
-	   }
 	}
 
-	ltfsmsg(LTFS_INFO, "20096I");
+/*
+ * Report various warnings depending on the outcome:
+ */
+ 	if (status == -1) {         /* -1 = SCSI problem */
+	ltfsmsg (LTFS_WARN, "20078W", status);
+		
+	} else if (status == -2) {  /* -2 = file saving problem */
+		ltfsmsg (LTFS_WARN, "20079W");
+
+	} else if (status == -3) {  /* -3 = malloc problem */
+		ltfsmsg (LTFS_WARN, "20078W", status);
+
+	} else {
+		ltfsmsg (LTFS_DEBUG, "20080D", fname);
+	}
+
+	ltfsmsg (LTFS_INFO, "20096I");
 	return status;
 }
 
-/**
- * Read buffer
- * @param device a pointer to the ltotape backend
- * @param id
- * @param buf
- * @param offset
- * @param len
- * @param type
+/****************************************************************************
+ * Execute a SCSI Read buffer command
+ * @param device   a pointer to the ltotape backend
+ * @param id       the buffer ID to be read
+ * @param buf      where to store the returned data
+ * @param offset   where to read from in the given drive buffer
+ * @param len      how much to read from the given data buffer
+ * @param type     the mode parameter
  * @return 0 on success or negative value on error
  */
-static int ltotape_readbuffer(void *device, int id, unsigned char *buf, size_t offset, size_t len,
-					   int type)
+static int ltotape_readbuffer (void *device, int id, unsigned char *buf, size_t offset, size_t len, int type)
 {
 	ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*) device;
-	int           status;
+	int                   status;
 
 	/* Prepare Data Buffer */
 	sio->data_length = len;
@@ -293,7 +301,7 @@ static int ltotape_readbuffer(void *device, int id, unsigned char *buf, size_t o
 
 	/* Prepare CDB */
 	sio->cdb_length = 10;
-	sio->cdb[0] = 0x3c;			/* SCSI ReadBuffer(10) Code */
+	sio->cdb[0] = CMDread_buffer;			/* SCSI ReadBuffer(10) Code */
 	sio->cdb[1] = type;
 	sio->cdb[2] = id;
 	sio->cdb[3] = (unsigned char) (offset >> 16);
@@ -302,6 +310,7 @@ static int ltotape_readbuffer(void *device, int id, unsigned char *buf, size_t o
 	sio->cdb[6] = (unsigned char) (len >> 16);
 	sio->cdb[7] = (unsigned char) (len >> 8);
 	sio->cdb[8] = (unsigned char) (len & 0xFF);
+	sio->cdb[9] = 0x00;
 
 	sio->data_direction = HOST_READ;
 	/*
@@ -355,16 +364,13 @@ static int ltotape_snapshot_now (void* device)
 	return ltotape_scsiexec (sio);
 }
 
-/**
+/****************************************************************************
  * Take drive dump
  * @param device a pointer to the ltotape backend
  * @param fname a file name of dump
  * @return 0 on success or negative value on error
  */
-#define DUMP_HEADER_SIZE   (4)
-#define DUMP_TRANSFER_SIZE (512 * KB)
-
-static int ltotape_read_drivedump(void *device, const char *fname)
+static int ltotape_read_drivedump (void *device, const char *fname)
 {
 	long long data_length, buf_offset;
 	FILE* dumpfd;
@@ -378,8 +384,8 @@ static int ltotape_read_drivedump(void *device, const char *fname)
 	time_t               now;
 	int                  j;
 
-#ifdef HP_BUILD
-	const char*          lsn = "HP LTFS                         ";
+#ifdef HPE_BUILD
+	const char*          lsn = "HPE LTFS                         ";
 #elif defined QUANTUM_BUILD
 	const char*          lsn = "Quantum LTFS                    ";
 #elif defined GENERIC_OEM_BUILD
@@ -500,46 +506,52 @@ static int ltotape_read_drivedump(void *device, const char *fname)
 	return rc;
 }
 
-/**
+/****************************************************************************
  * Get the buffer size
  * @param buff_id, buffer id
  * @param buffer, buffer
  * @return 0 or size of buffer on success or negative value on error
  */
-static long long ltotape_get_buffer_size(int buff_id, unsigned char *buffer)
+static long long ltotape_get_buffer_size (int buff_id, unsigned char *buffer)
 {
-	long long data_length, buf_offset, size, temp_size;
-    bool not_found = TRUE;
+  long long size;
+  int       data_length;
+  int       buf_offset;
+  int       bytes_processed;
+  bool      not_found;
 
-    size = -1;
-    buf_offset = 32;
-    temp_size = 0;
+  size = -1;
+  buf_offset = 32;
+  bytes_processed = 0;
+  not_found = TRUE;
 
-    data_length = (buffer[30] << 8) + (int) buffer[31];
+  data_length = (((int)buffer[30]) << 8) + (int)buffer[31];
 
-    while(not_found && (temp_size < data_length)) {
-    	if(buff_id == buffer[buf_offset]) {
-    		not_found = FALSE;
-    		size = (buffer[buf_offset+4] << 24) + (buffer[buf_offset+5] << 16) + (buffer[buf_offset+6] << 8) + (int) buffer[buf_offset+7];
-    	}else {
-    		buf_offset = buf_offset + 8;
-    		temp_size = temp_size + 8;
-    	}
+  while (not_found && (bytes_processed < data_length)) {
+
+    if (buff_id == buffer[buf_offset]) {
+      not_found = FALSE;
+      size = (((long long)buffer[buf_offset + 4]) << 24) + 
+             (((long long)buffer[buf_offset + 5]) << 16) + 
+             (((long long)buffer[buf_offset + 6]) <<  8) + 
+              ((long long)buffer[buf_offset + 7]);
+
+    } else {
+      buf_offset += 8;
+      bytes_processed += 8;
     }
+  }
 
 	return size;
 }
 
-/**
+/****************************************************************************
  * Take mini drive dump
  * @param device a pointer to the ltotape backend
  * @param fname a file name of dump
  * @return 0 on success or negative value on error
  */
-#define MINI_DUMP_HEADER_SIZE   (256)
-#define MINI_DUMP_TRANSFER_SIZE (256 * KB)
-
-static int ltotape_read_mini_drivedump(void *device, const char *fname)
+static int ltotape_read_mini_drivedump (void *device, const char *fname)
 {
 	long long data_length, buf_offset;
 	FILE*  dumpfd;
@@ -553,14 +565,13 @@ static int ltotape_read_mini_drivedump(void *device, const char *fname)
 	time_t               now;
 	int                  j;
 
-#ifdef HP_BUILD
-	const char*          lsn = "HP LTFS                         ";
+#ifdef HPE_BUILD
+	const char*          lsn = "HPE LTFS                         ";
 #elif defined QUANTUM_BUILD
 	const char*          lsn = "Quantum LTFS                    ";
 #elif defined GENERIC_OEM_BUILD
 	const char*          lsn = "Generic LTFS                    ";
 #endif
-
 
 	/* Set transfer size */
 	transfer_size = MINI_DUMP_TRANSFER_SIZE;
@@ -681,23 +692,17 @@ static int ltotape_read_mini_drivedump(void *device, const char *fname)
 	return rc;
 }
 
-#define SENDDIAG_BUF_LEN (8)
 /****************************************************************************
  * Instruct drive to generate a log snapshot
  * @param device a pointer to the ltotape backend tape device
- * @param diagid diagnostic id
+ * @param diagid diagnostic id (ls byte; ms byte is assumed to be 0x01)
  * @return 0 on success or negative value on error
  */
 static int ltotape_snapshot_dump(void* device, int diagid) {
 
-	unsigned char buf[SENDDIAG_BUF_LEN];
-	unsigned char sense[MAXSENSE];
+	unsigned char buf [SENDDIAG_BUF_LEN];
 	int           status;
-
 	ltotape_scsi_io_type *sio = (ltotape_scsi_io_type*) device;
-
-	memset(sense, 0, sizeof(sense));
-
 
 	/* Prepare Data Buffer */
 	sio->data_length = SENDDIAG_BUF_LEN;
@@ -708,18 +713,20 @@ static int ltotape_snapshot_dump(void* device, int diagid) {
 	 * Set up the cdb:
 	 */
 	sio->cdb_length = 6;
-	sio->cdb[0] = 0x1d; /* SCSI Send Diag Code */
+	sio->cdb[0] = CMDsend_diagnostic; /* SCSI Send Diag Code */
 	sio->cdb[1] = 0x11; /* PF bit is set to 1 */
+	sio->cdb[2] = 0x00;
 	sio->cdb[3] = 0x00;
 	sio->cdb[4] = 0x08; /* parameter length is 0x0008 */
+	sio->cdb[5] = 0x00;
 
 	/* Prepare payload */
-	sio->data[0] = 0x80; /* page code */
-	sio->data[1] = 0x00; /* page code */
+	sio->data[0] = 0x80;   /* page code       */
+	sio->data[1] = 0x00;
 	sio->data[2] = 0x00;
-	sio->data[3] = 0x04; /* page length */
-	sio->data[4] = 0x01;
-	sio->data[5] = diagid; /* diagnostic id */
+	sio->data[3] = 0x04;   /* page length     */
+	sio->data[4] = 0x01;   /* diag id ms byte */
+	sio->data[5] = diagid; /* diagnostic id   */
 
 	sio->data_direction = HOST_WRITE;
 
@@ -749,12 +756,12 @@ static int ltotape_read_snapshot (void* device, char* fname)
 	int                  j;
 	FILE*                fp;
 	time_t               now;
-#ifdef HP_BUILD
-	const char*          lsn = "HP LTFS                         ";
+#ifdef HPE_BUILD
+	const char*          lsn = "HPE LTFS                         ";
 #elif defined QUANTUM_BUILD
 	const char*          lsn = "Quantum LTFS                    ";
 #elif defined GENERIC_OEM_BUILD
-	const char*          lsn = "LTFS                            ";
+  const char*          lsn = "Generic LTFS                    ";
 #endif
 
 /*
@@ -891,7 +898,12 @@ static int ltotape_trim_logs (char* serialno)
 /*
  * Find the oldest logfile for this drive:
  */
+#if defined HPE_mingw_BUILD || defined __APPLE__
+  numlogs = scandir (dirname, &logfiles, (void*)ltotape_select_logfiles, (void*)ltotape_sort_oldest);
+#else
   numlogs = scandir (dirname, &logfiles, ltotape_select_logfiles, ltotape_sort_oldest);
+#endif
+
   if (numlogs < 0) {
     ltfsmsg(LTFS_INFO, "20091I", "directory", dirname, strerror(errno));
     return -1;
@@ -947,24 +959,16 @@ static int ltotape_select_logfiles (const struct dirent *entry)
  * @param pB - second entry to be compared
  * @return 1 if A is newer, -1 if B is newer, 0 if happen to be same age
  */
-#ifdef QUANTUM_BUILD
 static int ltotape_sort_oldest (const struct dirent ** pA, const struct dirent ** pB)
-#else
-static int ltotape_sort_oldest (const void* p1, const void* p2)
-#endif
 {
   time_t tA, tB;
   struct stat filstat;
   char path[1024];
-#ifndef QUANTUM_BUILD
-  const struct dirent** pA = (const struct dirent**) p1;
-  const struct dirent** pB = (const struct dirent**) p2;
-#endif
 
   sprintf (path, "%s/%s", dirname, (*pA)->d_name);
   if (stat (path, &filstat) != 0) {
     ltfsmsg(LTFS_INFO, "20091I", "file", path, strerror(errno));
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
     /* Not a pointer, so a compiler warning trying to assign NULL*/
     tA = (time_t)0;
 #else
@@ -977,7 +981,7 @@ static int ltotape_sort_oldest (const void* p1, const void* p2)
   sprintf (path, "%s/%s", dirname, (*pB)->d_name);
   if (stat (path, &filstat) != 0) {
     ltfsmsg(LTFS_INFO, "20091I", "file", path, strerror(errno));
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
     /* Not a pointer, so a compiler warning trying to assign NULL*/
     tB = (time_t)0;
 #else

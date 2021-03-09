@@ -44,6 +44,11 @@
 **                  ashida@jp.ibm.com
 **
 *************************************************************************************
+**
+**  (C) Copyright 2015 - 2017 Hewlett Packard Enterprise Development LP
+**  10/13/17 Added support for SNIA 2.4
+**
+*************************************************************************************
 */
 
 #ifndef filename_handling_h_
@@ -53,5 +58,9 @@
 
 void update_platform_safe_name(struct dentry* dentry, bool handle_invalid_char, struct ltfs_index *idx);
 int ltfs_compare_names(const char *name1, const char *name2, int *result);
+// HPE MD 22.09.2017 Added following functions for SNIA 2.4
+void perform_name_percent_encoding(struct dentry* dentry);
+void perform_xattr_percent_encoding(struct xattr_info* xattr);
+void update_xattr_safe_name(struct xattr_info* xattr);
 
-#endif /* time_internal_h_ */
+#endif /* filename_handling_h_ */

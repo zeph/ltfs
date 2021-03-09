@@ -48,6 +48,11 @@
 **                  lucasvr@us.ibm.com
 **
 *************************************************************************************
+**
+**  (C) Copyright 2015 - 2017 Hewlett Packard Enterprise Development LP
+**  10/13/17 Added support for SNIA 2.4
+**
+*************************************************************************************
 */
 
 #include "ltfs.h"
@@ -232,6 +237,7 @@ int xml_schema_to_file(const char *filename, const char *creator
 int xml_schema_to_tape(char *reason, struct ltfs_volume *vol)
 {
 	int ret;
+	uint32_t idx_part;
 	xmlOutputBufferPtr write_buf;
 	xmlTextWriterPtr writer;
 	struct xml_output_tape *out_ctx;
@@ -259,10 +265,22 @@ int xml_schema_to_tape(char *reason, struct ltfs_volume *vol)
 	out_ctx->buf_used = 0;
 	out_ctx->device = vol->device;
 
+   idx_part = ltfs_part_id2num(ltfs_ip_id(vol), vol);
+
+   if (idx_part == vol->device->position.partition)
+   {
+      out_ctx->is_index_part = true;
+   }
+   else
+   {
+      out_ctx->is_index_part = false;
+   }        
+   
 	/* Create output buffer pointer. */
 	write_buf = xmlOutputBufferCreateIO(xml_output_tape_write_callback,
 										xml_output_tape_close_callback,
 										out_ctx, NULL);
+
 	if (! write_buf) {
 		ltfsmsg(LTFS_ERR, "17053E");
 		free(out_ctx->buf);
@@ -387,6 +405,11 @@ int _xml_write_schema(xmlTextWriterPtr writer, const char *creator,
 		xml_mktag(xmlTextWriterEndElement(writer), -1);
 		xml_mktag(xmlTextWriterEndElement(writer), -1);
 	}
+
+	if (idx->volumelockstate) {
+		xml_mktag(xmlTextWriterWriteElement(writer, BAD_CAST "volumelockstate",
+				BAD_CAST (idx->volumelockstate)), -1);
+	}
 	xml_mktag(xmlTextWriterWriteFormatElement(
 		writer, BAD_CAST NEXTUID_TAGNAME, "%"PRIu64, idx->uid_number), -1);
 
@@ -441,8 +464,21 @@ int _xml_write_dirtree(xmlTextWriterPtr writer, struct dentry *dir,
 			xml_mktag(xmlTextWriterStartElement(writer, BAD_CAST "name"), -1);
 			xml_mktag(xmlTextWriterEndElement(writer), -1);
 		}
-	} else
-		xml_mktag(xmlTextWriterWriteElement(writer, BAD_CAST "name", BAD_CAST dir->name), -1);
+    }
+    else {
+        // HPE MD added to support SNIA spec 2.4.0 sect 7.4
+        if (dir->percentencoded) {
+            xml_mktag(xmlTextWriterStartElement(writer, BAD_CAST "name"), -1);
+            xml_mktag(
+                xmlTextWriterWriteAttribute(writer, BAD_CAST "percentencoded", BAD_CAST "true"),
+                -1);
+            xml_mktag(xmlTextWriterWriteString(writer, BAD_CAST dir->name), -1);
+            xml_mktag(xmlTextWriterEndElement(writer), -1);
+        }
+        else {
+            xml_mktag(xmlTextWriterWriteElement(writer, BAD_CAST "name", BAD_CAST dir->name), -1);
+        }
+    }
 	xml_mktag(xmlTextWriterWriteElement(
 		writer, BAD_CAST "readonly", BAD_CAST (dir->readonly ? "true" : "false")), -1);
 	xml_mktag(_xml_write_dentry_times(writer, dir), -1);
@@ -498,11 +534,31 @@ int _xml_write_file(xmlTextWriterPtr writer, const struct dentry *file)
 
 	/* write standard attributes */
 	xml_mktag(xmlTextWriterStartElement(writer, BAD_CAST "file"), -1);
-	xml_mktag(xmlTextWriterWriteElement(writer, BAD_CAST "name", BAD_CAST file->name), -1);
+    // HPE MD added to support SNIA spec 2.4.0 sect 7.4 Percent Encoding
+    if (file->percentencoded) {
+        xml_mktag(xmlTextWriterStartElement(writer, BAD_CAST "name"), -1);
+        xml_mktag(
+            xmlTextWriterWriteAttribute(writer, BAD_CAST "percentencoded", BAD_CAST "true"),
+            -1);
+        xml_mktag(xmlTextWriterWriteString(writer, BAD_CAST file->name), -1);
+        xml_mktag(xmlTextWriterEndElement(writer), -1);
+    }
+    else {
+        xml_mktag(xmlTextWriterWriteElement(writer, BAD_CAST "name", BAD_CAST file->name), -1);
+    }
+
 	xml_mktag(xmlTextWriterWriteFormatElement(
 		writer, BAD_CAST "length", "%"PRIu64, file->size), -1);
 	xml_mktag(xmlTextWriterWriteElement(
 		writer, BAD_CAST "readonly", BAD_CAST (file->readonly ? "true" : "false")), -1);
+	
+	// HPE MD 12.10.2017 added to support SNIA spec 2.4.0 sect 9.2.8 openforwrite
+    if (file->openforwrite && (!file->isslink))
+    {
+        xml_mktag(xmlTextWriterWriteElement(
+            writer, BAD_CAST "openforwrite", BAD_CAST "true" ), -1);
+    }
+   
 	xml_mktag(_xml_write_dentry_times(writer, file), -1);
 	xml_mktag(xmlTextWriterWriteFormatElement(
 		writer, BAD_CAST UID_TAGNAME, "%"PRIu64, file->uid), -1);
@@ -616,9 +672,21 @@ int _xml_write_xattr(xmlTextWriterPtr writer, const struct dentry *file)
 		xml_mktag(xmlTextWriterStartElement(writer, BAD_CAST "extendedattributes"), -1);
 		TAILQ_FOREACH(xattr, &file->xattrlist, list) {
 			xml_mktag(xmlTextWriterStartElement(writer, BAD_CAST "xattr"), -1);
-			xml_mktag(
-				xmlTextWriterWriteElement(writer, BAD_CAST "key", BAD_CAST xattr->key), -1);
-			if (xattr->value) {
+
+                // HPE MD added to support SNIA spec 2.4.0 sect 7.4
+                if (xattr->percentencoded) {
+                    xml_mktag(xmlTextWriterStartElement(writer, BAD_CAST "key"), -1);
+                    xml_mktag(
+                       xmlTextWriterWriteAttribute(writer, BAD_CAST "percentencoded", BAD_CAST "true"),
+                       -1);
+                    xml_mktag(xmlTextWriterWriteString(writer, BAD_CAST xattr->percent_encoded_key), -1);
+                    xml_mktag(xmlTextWriterEndElement(writer), -1);
+                }
+                else {
+                    xml_mktag(xmlTextWriterWriteElement(writer, BAD_CAST "key", BAD_CAST xattr->key), -1);
+                }
+            
+            if (xattr->value) {
 				ret = pathname_validate_xattr_value(xattr->value, xattr->size);
 				if (ret < 0) {
 					ltfsmsg(LTFS_ERR, "17059E", ret);

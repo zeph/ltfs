@@ -53,9 +53,10 @@
 **
 *************************************************************************************
 **
-**  (C) Copyright 2015 Hewlett Packard Enterprise Development LP.
+**  (C) Copyright 2015, 2016 Hewlett Packard Enterprise Development LP
 **  07/06/10 Added function prototypes for three new functions in tape.c
 **  08/09/11 Added function prototype for further new function in tape.c
+**  10/13/17 Added support for SNIA 2.4
 **
 *************************************************************************************
 */
@@ -153,9 +154,10 @@ ssize_t tape_read(struct device_data *dev, char *buf, size_t count, const bool u
 
 int tape_erase(struct device_data *dev, bool long_erase);
 int tape_reset_capacity(struct device_data *dev);
-int tape_format(struct device_data *dev, tape_partition_t index_part, const char *vol_name, const char *barcode_name);
+int tape_format(struct device_data *dev, tape_partition_t index_part, const char *vol_name, const char *barcode_name,
+		const char *vol_mam_uuid);
 int tape_unformat(struct device_data *dev);
-ssize_t tape_write(struct device_data *dev, const char *buf, size_t count, bool ignore_less, bool ignore_nospc);
+ssize_t tape_write(struct device_data *dev, const char *buf, size_t count, bool is_index_part, bool ignore_less, bool ignore_nospc); // HPE MD added is_index_part
 int tape_write_filemark(struct device_data *dev, uint8_t count, bool ignore_less, bool ignore_nospc, bool immed);
 
 int tape_get_volume_change_reference(struct device_data *dev, uint64_t *vwj);
@@ -205,6 +207,7 @@ const char *tape_get_media_encrypted(struct device_data *dev);
 const char *tape_get_drive_encryption_state(struct device_data *dev);
 const char *tape_get_drive_encryption_method(struct device_data *dev);
 int tape_get_worm_status(struct device_data *dev, bool *is_worm);
+int tape_get_physically_write_protected(struct device_data *dev);
 
 /* Separate implementation for MAM attributes exist. */
 #if 0
@@ -220,7 +223,9 @@ int read_tape_attribute (struct ltfs_volume *vol, char **val, const char *name);
 int tape_get_MAMattributes(struct device_data *dev, unsigned int attribute_id, const tape_partition_t part,
 		struct tc_mam_attr *mam_attr);
 int tape_update_mam_attributes(struct device_data *device,
-		const char *vol_name, unsigned int attribute_id, const char *barcode_name);
+		const char *vol_name, unsigned int attribute_id, const char *barcode_name, mam_lockval lockbit);
+int tape_get_MAM_AMVALattributes(struct device_data *dev, const tape_partition_t part, bool quiet,
+		struct tc_mam_attr *mam_attr);
 
 #ifdef __cplusplus
 }

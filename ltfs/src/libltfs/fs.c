@@ -48,6 +48,11 @@
 **                  lucasvr@us.ibm.com
 **
 *************************************************************************************
+**
+**  (C) Copyright 2015 - 2017 Hewlett Packard Enterprise Development LP
+**  10/13/17 Added support for SNIA 2.4
+**
+*************************************************************************************
 */
 
 #ifdef mingw_PLATFORM
@@ -226,8 +231,8 @@ struct dentry * fs_allocate_dentry(struct dentry *parent, const char *name, cons
 			return NULL;
 		}
 	} else if(!name && platform_safe_name) {
-		d->name = strdup(platform_safe_name);
 		d->platform_safe_name = strdup(platform_safe_name);
+		perform_name_percent_encoding(d);  // HPE MD added to support SNIA spec 2.4.0 sect 7.4
 		if (! d->name || ! d->platform_safe_name) {
 			ltfsmsg(LTFS_ERR, "10001E", "fs_allocate_dentry: name");
 			if (d->name)
@@ -866,7 +871,7 @@ void _fs_dump_dentry(struct dentry *ptr, int spaces)
 	 *
 	 * Format string changes to make compiler happy
 	 */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 	printf("%s%s [%d] {size=%"PRIu64", realsize=%"PRIu64", readonly=%d, " \
 			"creation=%"PRId64", change=%"PRId64", modify=%"PRId64", " \
 			"access=%"PRId64"%s}\n",
@@ -882,7 +887,7 @@ void _fs_dump_dentry(struct dentry *ptr, int spaces)
 			ptr->readonly, (long long int) ptr->creation_time.tv_sec, (long long int) ptr->change_time.tv_sec,
 			(long long int) ptr->modify_time.tv_sec, (long long int) ptr->access_time.tv_sec,
 			ptr->deleted ? " (deleted)" : "");
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
 	/* Extent data */
 	TAILQ_FOREACH(extent, &ptr->extentlist, list) {
@@ -902,13 +907,13 @@ void _fs_dump_dentry(struct dentry *ptr, int spaces)
 		 *
 		 * Format string changes to make compiler happy
 		 */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 		printf("{xattr key=%s, value=%.*s, size=%Iu}\n", xattr->key,
 				(int)xattr->size, xattr->value, xattr->size);
 #else
 		printf("{xattr key=%s, value=%.*s, size=%zu}\n", xattr->key, (int)xattr->size,
 				xattr->value, xattr->size);
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 	}
 }
 
@@ -950,7 +955,7 @@ void fs_dump_tree(struct dentry *root)
 	 *
 	 * Format string changes to make compiler happy
 	 */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 	printf("%s [%d] {size=%"PRIu64", readonly=%d, creation=%"PRId64", " \
 			"change=%"PRId64", modify=%"PRId64", access=%"PRId64"}\n",
 			root->name, root->numhandles,
@@ -963,7 +968,7 @@ void fs_dump_tree(struct dentry *root)
 			root->size, root->readonly,
 			(long long int) root->creation_time.tv_sec, (long long int) root->change_time.tv_sec,
 			(long long int) root->modify_time.tv_sec, (long long int) root->access_time.tv_sec);
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 
 	/* Extended attributes data */
 	TAILQ_FOREACH(xattr, &root->xattrlist, list) {
@@ -974,13 +979,13 @@ void fs_dump_tree(struct dentry *root)
 		 *
 		 * Format string changes to make compiler happy
 		 */
-#ifdef HP_mingw_BUILD
+#ifdef HPE_mingw_BUILD
 		printf("{xattr key=%s, value=%.*s, size=%Iu}\n", xattr->key,
 				(int)xattr->size, xattr->value, xattr->size);
 #else
 		printf("{xattr key=%s, value=%.*s, size=%zu}\n", xattr->key, (int)xattr->size,
 			xattr->value, xattr->size);
-#endif /* HP_mingw_BUILD */
+#endif /* HPE_mingw_BUILD */
 	}
 
 	return _fs_dump_tree(root, 3);
